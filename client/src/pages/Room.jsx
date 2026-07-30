@@ -209,7 +209,8 @@ const Room = () => {
 
   // 4. Socket Connection & WebRTC Signaling
   const connectSocket = () => {
-    socketRef.current = io('http://localhost:5002', {
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5002';
+    socketRef.current = io(SOCKET_URL, {
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
