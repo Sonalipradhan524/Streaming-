@@ -90,7 +90,7 @@ const Register = () => {
           <div className="form-group">
             <label className="form-label" htmlFor="username">Username</label>
             <div style={{ position: 'relative' }}>
-              <User size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
+              <User size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
               <input
                 id="username"
                 type="text"
@@ -107,7 +107,7 @@ const Register = () => {
           <div className="form-group">
             <label className="form-label" htmlFor="email">Email Address</label>
             <div style={{ position: 'relative' }}>
-              <Mail size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
+              <Mail size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
               <input
                 id="email"
                 type="email"
@@ -124,7 +124,7 @@ const Register = () => {
           <div className="form-group" style={{ marginBottom: '2rem' }}>
             <label className="form-label" htmlFor="password">Password</label>
             <div style={{ position: 'relative' }}>
-              <Lock size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
+              <Lock size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
               <input
                 id="password"
                 type="password"

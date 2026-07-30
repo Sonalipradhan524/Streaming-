@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// Use environment variable for backend URL, fallback to localhost for dev
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5002/api';
+// Backend URL - production (Render) / fallback to localhost for dev
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://streaming-dsjf.onrender.com/api';
 
 // Create Axios Instance
 const api = axios.create({

@@ -26,7 +26,8 @@ import {
   Check,
   ChevronRight,
   TrendingUp,
-  Cpu
+  Cpu,
+  Edit2
 } from 'lucide-react';
 
 const Dashboard = () => {
@@ -73,6 +74,7 @@ const Dashboard = () => {
   // New room schedule states
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduledTime, setScheduledTime] = useState('');
+  const [editingRoomId, setEditingRoomId] = useState(null);
 
   const fetchRooms = async () => {
     setIsLoading(true);
@@ -112,39 +114,64 @@ const Dashboard = () => {
   const handleCreateRoom = async (e) => {
     e.preventDefault();
     if (!newRoomName.trim()) return;
-    if (isScheduled && !scheduledTime) {
-      showToast('Please select a scheduled date and time', 'error');
-      return;
-    }
-
-    setActionLoading(true);
-    setError('');
+    setIsLoading(true);
+    
     try {
-      const response = await api.post('/rooms', { 
-        name: newRoomName, 
-        isScheduled, 
-        scheduledAt: isScheduled ? scheduledTime : undefined 
-      });
-      const createdRoom = response.data;
-      
-      if (isScheduled) {
-        showToast(`Meeting "${createdRoom.name}" scheduled successfully!`, 'success');
-        setNewRoomName('');
-        setIsScheduled(false);
-        setScheduledTime('');
-        fetchDashboardData();
-        fetchRooms();
+      if (editingRoomId) {
+        // Update existing room
+        await api.put(`/rooms/${editingRoomId}`, {
+          name: newRoomName.trim(),
+          scheduledAt: isScheduled && scheduledTime ? scheduledTime : null
+        });
+        showToast('Meeting updated successfully!', 'success');
+        setEditingRoomId(null);
       } else {
-        showToast(`Stream "${createdRoom.name}" created successfully!`, 'success');
-        navigate(`/room/${createdRoom.roomId}`);
+        // Create new room
+        const response = await api.post('/rooms', {
+          name: newRoomName.trim(),
+          isScheduled,
+          scheduledAt: isScheduled && scheduledTime ? scheduledTime : null
+        });
+        showToast('Stream room created successfully!', 'success');
+        
+        if (!isScheduled) {
+          navigate(`/room/${response.data.roomId}`);
+          return;
+        }
       }
+      
+      setNewRoomName('');
+      setIsScheduled(false);
+      setScheduledTime('');
+      fetchDashboardData();
+      fetchRooms();
     } catch (err) {
-      console.error('Failed to create room:', err);
-      setError(err.response?.data?.message || 'Failed to create room.');
-      showToast('Error creating streaming room', 'error');
+      console.error('Failed to save room:', err);
+      showToast(err.response?.data?.message || 'Failed to save room.', 'error');
     } finally {
-      setActionLoading(false);
+      setIsLoading(false);
     }
+  };
+
+  const handleEditClick = (meeting) => {
+    setEditingRoomId(meeting.roomId);
+    setNewRoomName(meeting.name);
+    setIsScheduled(true);
+    
+    if (meeting.scheduledAt) {
+      const date = new Date(meeting.scheduledAt);
+      const tzOffset = date.getTimezoneOffset() * 60000;
+      const localISOTime = (new Date(date - tzOffset)).toISOString().slice(0, 16);
+      setScheduledTime(localISOTime);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const cancelEdit = () => {
+    setEditingRoomId(null);
+    setNewRoomName('');
+    setIsScheduled(false);
+    setScheduledTime('');
   };
 
   const handleJoinRoom = (e) => {
@@ -195,10 +222,38 @@ const Dashboard = () => {
     }
   };
 
-  const handleCopyLink = (code, e) => {
+  const fallbackCopyText = (text) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+    } catch (err) {
+      console.error('Fallback copy failed', err);
+    }
+    document.body.removeChild(textArea);
+  };
+
+  const copyToClipboard = async (text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (err) {
+        fallbackCopyText(text);
+      }
+    } else {
+      fallbackCopyText(text);
+    }
+  };
+
+  const handleCopyLink = async (code, e) => {
     e.stopPropagation();
     const link = `${window.location.origin}/room/${code}`;
-    navigator.clipboard.writeText(link);
+    await copyToClipboard(link);
     showToast('Meeting link copied to clipboard!', 'success');
   };
 
@@ -412,9 +467,9 @@ const Dashboard = () => {
                 <div className="glass-container" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <div style={{ padding: '6px', borderRadius: '8px', backgroundColor: 'rgba(139, 92, 246, 0.15)' }}>
-                      <Plus size={20} color="var(--primary)" />
+                      {editingRoomId ? <Edit2 size={20} color="var(--primary)" /> : <Plus size={20} color="var(--primary)" />}
                     </div>
-                    <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>{isScheduled ? 'Schedule a Meeting' : 'Start an Instant Stream'}</h3>
+                    <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>{editingRoomId ? 'Update Meeting' : (isScheduled ? 'Schedule a Meeting' : 'Start an Instant Stream')}</h3>
                   </div>
                   <form onSubmit={handleCreateRoom}>
                     <div className="form-group">
@@ -430,7 +485,7 @@ const Dashboard = () => {
                       />
                     </div>
 
-                     <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '8px', marginTop: '0.75rem', marginBottom: '0.75rem' }}>
+                     <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '8px', marginTop: '0.75rem', marginBottom: '0.75rem', opacity: editingRoomId ? 0.5 : 1, pointerEvents: editingRoomId ? 'none' : 'auto' }}>
                        <input
                          type="checkbox"
                          id="is-scheduled-ov"
@@ -450,16 +505,22 @@ const Dashboard = () => {
                           className="form-input"
                           value={scheduledTime}
                           onChange={(e) => setScheduledTime(e.target.value)}
-                          required
+                          required={isScheduled}
                           style={{ colorScheme: 'dark' }}
                         />
                       </div>
                     )}
 
-                    <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.25rem' }} disabled={actionLoading}>
-                      <Video size={18} />
-                      {actionLoading ? (isScheduled ? 'Scheduling...' : 'Creating room...') : (isScheduled ? 'Schedule Meeting' : 'Create & Join Stream')}
-                    </button>
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                      <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.25rem' }} disabled={isLoading}>
+                        {isLoading ? 'Processing...' : (editingRoomId ? 'Save Changes' : (isScheduled ? 'Schedule Meeting' : 'Create & Join Stream'))}
+                      </button>
+                      {editingRoomId && (
+                        <button type="button" onClick={cancelEdit} className="btn btn-secondary" style={{ width: '100%', marginTop: '0.25rem' }}>
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </form>
                 </div>
 
@@ -572,9 +633,21 @@ const Dashboard = () => {
                               {new Date(meeting.scheduledAt).toLocaleString()}
                             </span>
                           </div>
-                          <button onClick={() => navigate(`/room/${meeting.roomId}`)} className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', borderRadius: '8px' }}>
-                            Join
-                          </button>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button onClick={() => navigate(`/room/${meeting.roomId}`)} className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', borderRadius: '8px' }}>
+                              Join
+                            </button>
+                            {user && meeting.host && user._id === (meeting.host._id || meeting.host) && (
+                              <>
+                                <button onClick={() => handleEditClick(meeting)} className="btn btn-secondary" style={{ padding: '0.4rem', borderRadius: '8px', color: 'var(--text-main)' }} title="Edit Meeting">
+                                  <Edit2 size={16} />
+                                </button>
+                                <button onClick={(e) => handleDeleteRoom(meeting.roomId, e)} className="btn btn-secondary" style={{ padding: '0.4rem', borderRadius: '8px', color: 'var(--danger)' }} title="Delete Meeting">
+                                  <Trash2 size={16} />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
                       ))
                     )}
@@ -851,6 +924,33 @@ const Dashboard = () => {
         @media (max-width: 768px) {
           .header-search-bar {
             display: none !important;
+          }
+          /* Make the whole dashboard stack vertically on mobile */
+          div:has(> .sidebar-nav-container) {
+            flex-direction: column-reverse !important;
+          }
+          /* Turn sidebar into a bottom navigation bar */
+          .sidebar-nav-container {
+            width: 100% !important;
+            height: auto !important;
+            border-right: none !important;
+            border-top: 1px solid var(--border-light) !important;
+            flex-direction: row !important;
+            padding: 0.5rem !important;
+            align-items: center !important;
+            justify-content: space-around !important;
+            z-index: 20;
+          }
+          .sidebar-nav-container > div:first-child {
+            display: none !important; /* Hide Logo */
+          }
+          .sidebar-nav-container nav {
+            flex-direction: row !important;
+            width: 100%;
+            justify-content: space-around;
+          }
+          .sidebar-nav-container > div:last-child {
+            display: none !important; /* Hide Logout from bottom bar */
           }
         }
       `}</style>

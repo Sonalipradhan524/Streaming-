@@ -36,6 +36,29 @@ const roomSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isLocked: {
+      type: Boolean,
+      default: false,
+    },
+    password: {
+      type: String, // Hashed password
+    },
+    waitingRoomEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    coHosts: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      }
+    ],
+    bannedUsers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      }
+    ]
   },
   {
     timestamps: true,

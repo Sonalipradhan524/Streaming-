@@ -128,6 +128,66 @@ const getRoomDetails = async (req, res, next) => {
   }
 };
 
+// @desc    Update a room
+// @route   PUT /api/rooms/:roomId
+// @access  Private
+const updateRoom = async (req, res, next) => {
+  try {
+    const memoryDb = require('../config/memoryDb');
+    const Room = require('../models/Room');
+    const { name, scheduledAt } = req.body;
+
+    if (!name) {
+      res.status(400);
+      throw new Error('Please add a room name');
+    }
+
+    if (!memoryDb.isOnline()) {
+      const roomIndex = memoryDb.rooms.findIndex(r => r.roomId === req.params.roomId);
+      if (roomIndex === -1) {
+        res.status(404);
+        throw new Error('Room not found');
+      }
+      
+      const room = memoryDb.rooms[roomIndex];
+      if (room.host._id.toString() !== req.user._id.toString()) {
+        res.status(401);
+        throw new Error('Not authorized to update this room');
+      }
+      
+      room.name = name;
+      if (scheduledAt) {
+        room.scheduledAt = new Date(scheduledAt);
+      }
+      
+      return res.status(200).json(room);
+    }
+
+    let room = await Room.findOne({ roomId: req.params.roomId });
+    
+    if (!room) {
+      res.status(404);
+      throw new Error('Room not found');
+    }
+
+    if (room.host.toString() !== req.user._id.toString()) {
+      res.status(401);
+      throw new Error('Not authorized to update this room');
+    }
+
+    room.name = name;
+    if (scheduledAt) {
+      room.scheduledAt = new Date(scheduledAt);
+    }
+
+    await room.save();
+
+    res.status(200).json(room);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Delete a room
 // @route   DELETE /api/rooms/:roomId
 // @access  Private
@@ -174,6 +234,16 @@ const deleteRoom = async (req, res, next) => {
       throw new Error('Not authorized to delete this room');
     }
 
+    const MeetingHistory = require('../models/MeetingHistory');
+    await MeetingHistory.create({
+      room: room._id,
+      host: room.host,
+      participants: room.participants,
+      startedAt: room.createdAt || new Date(),
+      endedAt: new Date(),
+      duration: Math.floor((Date.now() - new Date(room.createdAt || Date.now()).getTime()) / 1000)
+    });
+
     await Room.deleteOne({ _id: room._id });
 
     // Log Activity
@@ -209,9 +279,36 @@ const getRoomMessages = async (req, res, next) => {
       return res.status(200).json(roomMessages);
     }
 
-    const messages = await Message.find({ room: room._id })
+    let { page = 1, limit = 50 } = req.query;
+    page = parseInt(page);
+    limit = parseInt(limit);
+    const skip = (page - 1) * limit;
+
+    // Build query: messages in this room that are either public (receiver: null) 
+    // OR where the current user is the sender OR the receiver
+    const query = {
+      room: room._id,
+      $or: [
+        { receiver: null },
+        { receiver: { $exists: false } },
+        { sender: req.user._id },
+        { receiver: req.user._id }
+      ]
+    };
+
+    const messages = await Message.find(query)
       .populate('sender', 'username email avatarColor profilePicture')
-      .sort({ createdAt: 1 });
+      .populate('receiver', 'username email avatarColor profilePicture')
+      .populate({
+        path: 'replyTo',
+        populate: { path: 'sender', select: 'username avatarColor' }
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    // Reverse to chronological order for chat display
+    messages.reverse();
 
     res.status(200).json(messages);
   } catch (error) {
@@ -284,12 +381,43 @@ const getScheduledRooms = async (req, res, next) => {
   }
 };
 
+// @desc    Get meeting history for a user
+// @route   GET /api/rooms/history
+// @access  Private
+const getMeetingHistory = async (req, res, next) => {
+  try {
+    const MeetingHistory = require('../models/MeetingHistory');
+    const memoryDb = require('../config/memoryDb');
+
+    if (!memoryDb.isOnline()) {
+      // Return a mock history
+      return res.status(200).json([]);
+    }
+
+    const history = await MeetingHistory.find({
+      $or: [
+        { host: req.user._id },
+        { participants: req.user._id }
+      ]
+    })
+      .populate('host', 'username email avatarColor')
+      .populate('room', 'name roomId')
+      .sort({ startedAt: -1 });
+
+    res.status(200).json(history);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createRoom,
   getRooms,
   getRoomDetails,
+  updateRoom,
   deleteRoom,
   getRoomMessages,
   getRoomsStats,
   getScheduledRooms,
+  getMeetingHistory,
 };

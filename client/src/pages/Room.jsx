@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
+import EmojiPicker from 'emoji-picker-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -17,6 +18,7 @@ import {
   AlertTriangle,
   Copy,
   Check,
+  Link2,
   Volume2,
   VolumeX,
   Maximize2,
@@ -33,8 +35,28 @@ import {
   BrainCircuit,
   MessageCircle,
   Shield,
-  FileText
+  FileText,
+  Languages,
+  List,
+  Download,
+  Star,
+  LogOut,
+  CheckCircle,
+  Hand
 } from 'lucide-react';
+
+const SUPPORTED_LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'or', label: 'Odia' },
+  { code: 'bn', label: 'Bengali' },
+  { code: 'ta', label: 'Tamil' },
+  { code: 'te', label: 'Telugu' },
+  { code: 'mr', label: 'Marathi' },
+  { code: 'fr', label: 'French' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'de', label: 'German' }
+];
 
 const Room = () => {
   const { roomId } = useParams();
@@ -56,10 +78,18 @@ const Room = () => {
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mediaError, setMediaError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   
   // Meeting Stopwatch Timer
   const [meetingSeconds, setMeetingSeconds] = useState(0);
+
+  // Host and Waiting Room states
+  const [inWaitingRoom, setInWaitingRoom] = useState(false);
+  const [waitingUsers, setWaitingUsers] = useState([]); // [{ socketId, user }]
+  const isHost = roomDetails?.host === user?._id;
+  const isCoHost = roomDetails?.coHosts?.includes(user?._id);
+  const canManageRoom = isHost || isCoHost;
 
   // Raise Hand states
   const [isHandRaised, setIsHandRaised] = useState(false);
@@ -78,23 +108,47 @@ const Room = () => {
   const [localStream, setLocalStream] = useState(null);
   const [remotePeers, setRemotePeers] = useState([]); // [{ socketId, user: { username, avatarColor }, stream }]
 
-  // Chat filters
+  // Chat filters & features
   const [chatSearch, setChatSearch] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [directMessageTo, setDirectMessageTo] = useState(''); // '' = everyone
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceRecorder, setVoiceRecorder] = useState(null);
+  const [voiceRecordingTime, setVoiceRecordingTime] = useState(0);
+  const voiceTimerRef = useRef(null);
+  const [chatPage, setChatPage] = useState(1);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+
+  // Floating Emojis state
+  const [floatingEmojis, setFloatingEmojis] = useState([]); // [{ id, emoji }]
 
   // Speech to Text / AI Captions
   const [isCaptionsEnabled, setIsCaptionsEnabled] = useState(false);
   const [captionsText, setCaptionsText] = useState('');
+  const [liveCaption, setLiveCaption] = useState(null);
+  const [targetLanguage, setTargetLanguage] = useState('en');
   const recognitionRef = useRef(null);
+  const captionTimeoutRef = useRef(null);
 
   // AI Meeting Summaries
   const [aiSummary, setAiSummary] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [noiseSuppression, setNoiseSuppression] = useState(false);
 
+  // Timeline Feature
+  const [timelineEvents, setTimelineEvents] = useState([]);
+  const [timelineSearch, setTimelineSearch] = useState('');
+  const [timelineFilter, setTimelineFilter] = useState('All'); // 'All', 'Decisions', 'Tasks', 'Highlights'
+
   // Audio Context for Noise Suppression
   const audioContextRef = useRef(null);
   const audioSourceRef = useRef(null);
   const filterNodeRef = useRef(null);
+  const analyserNodeRef = useRef(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   // Refs
   const socketRef = useRef(null);
@@ -115,6 +169,22 @@ const Room = () => {
     ]
   };
 
+  useEffect(() => {
+    if (socketRef.current) {
+      socketRef.current.emit('set-target-language', targetLanguage);
+    }
+  }, [targetLanguage]);
+
+  useEffect(() => {
+    isCaptionsEnabledRef.current = isCaptionsEnabled;
+  }, [isCaptionsEnabled]);
+
+  useEffect(() => {
+    if (window.Notification && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   // 1. Stopwatch timer effect
   useEffect(() => {
     const interval = setInterval(() => {
@@ -131,24 +201,49 @@ const Room = () => {
     return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const fetchMessages = async (page = 1) => {
+    try {
+      const msgResponse = await api.get(`/rooms/${roomId}/messages?page=${page}&limit=50`);
+      if (page === 1) {
+        setMessages(msgResponse.data);
+      } else {
+        setMessages(prev => [...msgResponse.data, ...prev]);
+      }
+      if (msgResponse.data.length < 50) setHasMoreMessages(false);
+      setChatPage(page);
+    } catch (err) {
+      console.error('Failed to fetch messages:', err);
+    }
+  };
+
   // 2. Load Room Details and Persistent Messages from Database on load
   useEffect(() => {
-    const loadRoomAndMessages = async () => {
+    const loadRoom = async () => {
       try {
         const response = await api.get(`/rooms/${roomId}`);
         setRoomDetails(response.data);
-
-        // Fetch past messages
-        const msgResponse = await api.get(`/rooms/${roomId}/messages`);
-        setMessages(msgResponse.data);
+        fetchMessages(1);
+        
+        try {
+          const timelineRes = await api.get(`/timeline/${roomId}`);
+          setTimelineEvents(timelineRes.data || []);
+        } catch (tErr) {
+          console.error('Failed to load timeline:', tErr);
+        }
       } catch (err) {
-        console.error('Failed to load room details or messages:', err);
+        console.error('Failed to load room details:', err);
         showToast('Room not found or unauthorized.', 'error');
         navigate('/dashboard');
       }
     };
-    loadRoomAndMessages();
+    loadRoom();
   }, [roomId, navigate]);
+
+  const handleScrollChat = (e) => {
+    if (e.target.scrollTop === 0 && hasMoreMessages) {
+      fetchMessages(chatPage + 1);
+    }
+  };
 
   // 3. Initialize Media (Camera & Mic)
   useEffect(() => {
@@ -164,6 +259,34 @@ const Room = () => {
         
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
+        }
+
+        // Speaker Detection
+        try {
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 512;
+          const source = audioCtx.createMediaStreamSource(stream);
+          source.connect(analyser);
+          audioContextRef.current = audioCtx;
+          analyserNodeRef.current = analyser;
+          
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const checkAudioLevel = () => {
+            if (analyserNodeRef.current && localStreamRef.current?.getAudioTracks()[0]?.enabled) {
+              analyserNodeRef.current.getByteFrequencyData(dataArray);
+              let sum = 0;
+              for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+              const average = sum / dataArray.length;
+              setIsSpeaking(average > 10);
+            } else {
+              setIsSpeaking(false);
+            }
+            requestAnimationFrame(checkAudioLevel);
+          };
+          checkAudioLevel();
+        } catch(e) {
+          console.error('AudioContext error:', e);
         }
         
         setMediaError('');
@@ -235,26 +358,129 @@ const Room = () => {
       socketRef.current.emit('join-room', { roomId, userId: user._id });
     });
 
+    // Waiting Room events
+    socketRef.current.on('in-waiting-room', () => {
+      setInWaitingRoom(true);
+    });
+
+    socketRef.current.on('admitted', () => {
+      setInWaitingRoom(false);
+      showToast('You have been admitted to the room', 'success');
+      socketRef.current.emit('join-room', { roomId, userId: user._id });
+    });
+
+    socketRef.current.on('user-in-waiting-room', ({ socketId, user }) => {
+      setWaitingUsers(prev => {
+        if (!prev.find(u => u.socketId === socketId)) {
+          return [...prev, { socketId, user }];
+        }
+        return prev;
+      });
+      showToast(`${user.username} is waiting to join`, 'info');
+    });
+
+    // Host Control events
+    socketRef.current.on('kicked', () => {
+      showToast('You have been removed from the meeting by the host', 'error');
+      navigate('/dashboard');
+    });
+
+    socketRef.current.on('force-mute-mic', () => {
+      setIsMicEnabled(false);
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach(t => t.enabled = false);
+      }
+      showToast('The host has muted your microphone', 'warning');
+    });
+
+    socketRef.current.on('force-mute-cam', () => {
+      setIsCamEnabled(false);
+      if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach(t => t.enabled = false);
+      }
+      showToast('The host has disabled your camera', 'warning');
+    });
+
+    socketRef.current.on('meeting-ended', () => {
+      showToast('The host has ended the meeting for everyone', 'info');
+      navigate('/dashboard');
+    });
+
+    socketRef.current.on('room-locked-state', ({ isLocked }) => {
+      setRoomDetails(prev => prev ? { ...prev, isLocked } : prev);
+      showToast(`The room has been ${isLocked ? 'locked' : 'unlocked'} by the host`, 'info');
+    });
+
+    // Receive floating emoji
+    socketRef.current.on('floating-emoji-received', ({ emoji }) => {
+      triggerFloatingEmoji(emoji);
+    });
+
     // Receive chat message
     socketRef.current.on('message-received', (message) => {
       setMessages((prev) => {
-        if (prev.some((msg) => msg._id === message._id)) {
-          return prev;
+        // If it's our own optimistic message, update it instead of adding a duplicate
+        const existingIndex = prev.findIndex(m => m._id === message._id);
+        if (existingIndex !== -1) {
+          const newMessages = [...prev];
+          newMessages[existingIndex] = message;
+          return newMessages;
         }
         return [...prev, message];
       });
-      
-      // Increment unread message count if NOT currently viewing the chat tab
-      setActiveTab((currentTab) => {
-        if (currentTab !== 'chat') {
-          setUnreadCount((count) => count + 1);
+      if (activeTab !== 'chat') {
+        setUnreadCount((prev) => prev + 1);
+        if (Notification.permission === 'granted') {
+          new Notification('New Message', { body: message.text, icon: '/favicon.ico' });
         }
-        return currentTab;
-      });
+      } else {
+        // We are looking at chat, mark as seen
+        socketRef.current.emit('message-seen', { messageId: message._id });
+      }
+      setTimeout(scrollToBottom, 100);
+    });
+
+    socketRef.current.on('message-delivered', ({ tempId, _id }) => {
+      setMessages((prev) => prev.map(msg => 
+        msg._id === tempId ? { ...msg, _id, status: 'delivered' } : msg
+      ));
+    });
+
+    socketRef.current.on('message-seen-by', ({ messageId, seenBy }) => {
+      setMessages((prev) => prev.map(msg => 
+        msg._id === messageId ? { ...msg, seenBy: [...(msg.seenBy || []), seenBy] } : msg
+      ));
+    });
+
+    socketRef.current.on('message-edited', ({ messageId, newText }) => {
+      setMessages((prev) => prev.map(msg => 
+        msg._id === messageId ? { ...msg, text: newText, isEdited: true } : msg
+      ));
+    });
+
+    socketRef.current.on('message-deleted', ({ messageId }) => {
+      setMessages((prev) => prev.map(msg => 
+        msg._id === messageId ? { ...msg, text: '🗑️ This message was deleted', isDeleted: true } : msg
+      ));
+    });
+
+    socketRef.current.on('timeline-event', (eventData) => {
+      setTimelineEvents((prev) => [...prev, eventData]);
+      if (activeTab !== 'timeline') {
+        showToast(`AI Timeline: ${eventData.title}`, 'info');
+      }
+    });
+
+    socketRef.current.on('live-caption', (captionData) => {
+      setLiveCaption(captionData);
+      if (captionTimeoutRef.current) clearTimeout(captionTimeoutRef.current);
+      captionTimeoutRef.current = setTimeout(() => {
+        setLiveCaption(null);
+      }, 5000);
     });
 
     // Message reactions
-    socketRef.current.on('reaction-received', ({ messageId, emoji, socketId }) => {
+    socketRef.current.on('reaction-received', ({ messageId, emoji, socketId: _socketId }) => {
       setMessages((prev) => prev.map((msg) => {
         if (msg._id === messageId) {
           const reactions = msg.reactions || {};
@@ -382,7 +608,7 @@ const Room = () => {
       }
     });
 
-    socketRef.current.on('user-left', ({ socketId, userId }) => {
+    socketRef.current.on('user-left', ({ socketId, userId: _userId }) => {
       const peer = remotePeers.find(p => p.socketId === socketId);
       if (peer) {
         showToast(`${peer.user.username} left the room.`, 'info');
@@ -521,6 +747,10 @@ const Room = () => {
         screenStreamRef.current = screenStream;
         setIsScreenSharing(true);
         showToast('Screen sharing started', 'success');
+        
+        if (socketRef.current) {
+          socketRef.current.emit('screenshare-toggled', { isSharing: true });
+        }
 
         const screenTrack = screenStream.getVideoTracks()[0];
 
@@ -555,6 +785,10 @@ const Room = () => {
 
     setIsScreenSharing(false);
     showToast('Screen sharing stopped', 'info');
+
+    if (socketRef.current) {
+      socketRef.current.emit('screenshare-toggled', { isSharing: false });
+    }
 
     const localVideoTrack = localStreamRef.current?.getVideoTracks()[0];
     if (localVideoTrack) {
@@ -621,6 +855,9 @@ const Room = () => {
         mediaRecorderRef.current.stop();
       }
       setIsRecording(false);
+      if (socketRef.current) {
+        socketRef.current.emit('recording-toggled', { isRecording: false });
+      }
       showToast('Recording stopped. Preparing download...', 'success');
     } else {
       // Start Recording local camera stream
@@ -656,9 +893,12 @@ const Room = () => {
           }, 100);
         };
 
-        recorder.start();
+        mediaRecorderRef.current.start();
         setIsRecording(true);
-        showToast('Stream recording started.', 'success');
+        if (socketRef.current) {
+          socketRef.current.emit('recording-toggled', { isRecording: true });
+        }
+        showToast('Recording started', 'success');
       } catch (err) {
         console.error('Recording initialization failed:', err);
         showToast('Recording format not supported in this browser.', 'error');
@@ -686,15 +926,179 @@ const Room = () => {
     if (!inputText.trim()) return;
 
     if (socketRef.current) {
-      socketRef.current.emit('send-message', { text: inputText });
+      if (editingMessage) {
+        socketRef.current.emit('edit-message', { messageId: editingMessage._id, newText: inputText });
+        setEditingMessage(null);
+      } else {
+        const tempId = `temp-${Date.now()}`;
+        const msgPayload = {
+          text: inputText,
+          type: 'text',
+          replyTo: replyingTo ? replyingTo._id : null,
+          receiverId: directMessageTo || null,
+          tempId
+        };
+        
+        // Optimistic UI update
+        const optimisticMsg = {
+          _id: tempId,
+          text: inputText,
+          sender: { _id: user._id, username: user.username, avatarColor: user.avatarColor },
+          createdAt: new Date(),
+          status: 'sending'
+        };
+        setMessages(prev => [...prev, optimisticMsg]);
+        setTimeout(scrollToBottom, 50);
+
+        socketRef.current.emit('send-message', msgPayload);
+        setReplyingTo(null);
+      }
+      
       setInputText('');
       socketRef.current.emit('typing', { isTyping: false });
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('File size must be less than 10MB', 'error');
+      return;
+    }
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      const fileUrl = res.data.url;
+      const fileType = file.type.startsWith('image/') ? 'image' : 'file';
+
+      if (socketRef.current) {
+        const msgPayload = {
+          text: fileUrl,
+          type: fileType,
+          replyTo: replyingTo ? replyingTo._id : null,
+          receiverId: directMessageTo || null
+        };
+        socketRef.current.emit('send-message', msgPayload);
+        setReplyingTo(null);
+        showToast('File shared successfully!', 'success');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('File upload failed', 'error');
+    } finally {
+      setIsUploading(false);
+      e.target.value = null; // reset input
+    }
+  };
+
+  const toggleVoiceRecording = async () => {
+    if (isRecordingVoice) {
+      // Stop recording
+      if (voiceRecorder) {
+        voiceRecorder.stop();
+        if (voiceTimerRef.current) clearInterval(voiceTimerRef.current);
+      }
+      setIsRecordingVoice(false);
+    } else {
+      // Start recording
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        const audioChunks = [];
+
+        mediaRecorder.ondataavailable = event => {
+          audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          const file = new File([audioBlob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+          
+          setIsUploading(true);
+          const formData = new FormData();
+          formData.append('file', file);
+          
+          try {
+            const res = await api.post('/upload', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            if (socketRef.current) {
+              socketRef.current.emit('send-message', {
+                text: res.data.url,
+                type: 'voice',
+                replyTo: replyingTo ? replyingTo._id : null,
+                receiverId: directMessageTo || null
+              });
+              setReplyingTo(null);
+              showToast('Voice message sent!', 'success');
+            }
+          } catch (err) {
+            console.error(err);
+            showToast('Voice upload failed', 'error');
+          } finally {
+            setIsUploading(false);
+            setVoiceRecordingTime(0);
+          }
+          
+          // Stop mic tracks
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        setVoiceRecorder(mediaRecorder);
+        setIsRecordingVoice(true);
+        setVoiceRecordingTime(0);
+        
+        voiceTimerRef.current = setInterval(() => {
+          setVoiceRecordingTime(prev => prev + 1);
+        }, 1000);
+      } catch (err) {
+        showToast('Microphone access denied', 'error');
+      }
     }
   };
 
   // Emojis pick helper
   const addEmoji = (emoji) => {
     setInputText(prev => prev + emoji);
+  };
+
+  const triggerFloatingEmoji = (emoji) => {
+    const id = Date.now() + Math.random();
+    setFloatingEmojis((prev) => [...prev, { id, emoji }]);
+    setTimeout(() => {
+      setFloatingEmojis((prev) => prev.filter((e) => e.id !== id));
+    }, 4000);
+  };
+
+  const sendFloatingEmoji = (emoji) => {
+    triggerFloatingEmoji(emoji);
+    if (socketRef.current) {
+      socketRef.current.emit('send-floating-emoji', { emoji });
+    }
+  };
+
+  const togglePip = async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (localVideoRef.current && document.pictureInPictureEnabled) {
+        await localVideoRef.current.requestPictureInPicture();
+      } else {
+        showToast('Picture-in-Picture not supported in this browser.', 'error');
+      }
+    } catch (error) {
+      console.error('PiP error:', error);
+      showToast('Could not start Picture-in-Picture', 'error');
+    }
   };
 
   // Message reaction helper
@@ -704,27 +1108,6 @@ const Room = () => {
     }
   };
 
-  // Base64 file attachments helper
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('File must be smaller than 2MB', 'error');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      // Append file mock payload inside message text
-      const mockFileMessage = `📎 Attachment: ${file.name} (Base64 file url)`;
-      if (socketRef.current) {
-        socketRef.current.emit('send-message', { text: reader.result }); // Sends base64 string
-      }
-      showToast('File uploaded successfully!', 'success');
-    };
-    reader.readAsDataURL(file);
-  };
 
   // 9. AI Features
   const toggleCaptions = () => {
@@ -733,60 +1116,47 @@ const Room = () => {
         recognitionRef.current.stop();
       }
       setIsCaptionsEnabled(false);
-      isCaptionsEnabledRef.current = false;
-      setCaptionsText('');
-      showToast('Live captions disabled', 'info');
+      setLiveCaption(null);
+      showToast('Live translation captions disabled', 'info');
     } else {
-      // Initialize HTML5 Web Speech Recognition
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRecognition) {
         const recog = new SpeechRecognition();
         recog.continuous = true;
-        recog.interimResults = true;
-        recog.lang = 'en-US';
+        recog.interimResults = false; // Only send final text to save API calls
+        recog.lang = 'en-US'; // assuming speaker speaks english
 
         recog.onresult = (event) => {
-          let interimTranscript = '';
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              setCaptionsText(event.results[i][0].transcript);
-            } else {
-              interimTranscript += event.results[i][0].transcript;
-            }
+          const transcript = event.results[event.results.length - 1][0].transcript;
+          if (transcript.trim() && socketRef.current) {
+            socketRef.current.emit('speech-transcript', { text: transcript, roomId });
+          }
+        };
+
+        recog.onerror = (event) => {
+          console.error('Speech recognition error', event.error);
+          if (event.error === 'not-allowed') {
+            showToast('Microphone access denied for captions', 'error');
+            setIsCaptionsEnabled(false);
           }
         };
 
         recog.onend = () => {
-          if (isCaptionsEnabledRef.current) recog.start();
+          if (isCaptionsEnabledRef.current) {
+            try { recog.start(); } catch(e){}
+          }
         };
 
         recognitionRef.current = recog;
-        recog.start();
-        setIsCaptionsEnabled(true);
-        isCaptionsEnabledRef.current = true;
-        showToast('Live captions enabled', 'success');
+        try {
+          recog.start();
+          setIsCaptionsEnabled(true);
+          showToast('Live translation captions enabled!', 'success');
+        } catch (err) {
+          console.error('Failed to start recognition:', err);
+        }
       } else {
-        // Simulation Fallback if WebSpeech is not supported
-        setIsCaptionsEnabled(true);
-        isCaptionsEnabledRef.current = true;
-        showToast('Live captions simulation running...', 'info');
-        
-        let counter = 0;
-        const mockTexts = [
-          "Discussing WebRTC network latency and multi-peer topologies...",
-          "Checking camera resolution presets and device audio volumes...",
-          "Activating AI noise suppression nodes via the AudioContext...",
-          "Finished setting up the client routing context securely."
-        ];
-        
-        const simulationInterval = setInterval(() => {
-          if (!isCaptionsEnabledRef.current) {
-            clearInterval(simulationInterval);
-            return;
-          }
-          setCaptionsText(mockTexts[counter % mockTexts.length]);
-          counter++;
-        }, 5000);
+        showToast('Speech recognition is not supported in your browser.', 'error');
       }
     }
   };
@@ -855,19 +1225,99 @@ const Room = () => {
     }, 1800);
   };
 
+  const handleEndMeeting = async () => {
+    if (canManageRoom) {
+      const endForAll = window.confirm('Do you want to end the meeting for everyone? Click OK to delete the room. Click Cancel to just leave yourself.');
+      if (endForAll) {
+        try {
+          await api.delete(`/rooms/${roomId}`);
+          showToast('Meeting ended and room deleted.', 'success');
+        } catch (error) {
+          console.error('Failed to delete room:', error);
+          showToast('Failed to delete room.', 'error');
+        }
+        navigate('/dashboard');
+      } else {
+        navigate('/dashboard');
+      }
+    } else {
+      if (window.confirm('Are you sure you want to leave the meeting?')) {
+        navigate('/dashboard');
+      }
+    }
+  };
+
   // Invite clipboard copy helpers
-  const copyInvite = () => {
+  const fallbackCopyText = (text) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+    } catch (err) {
+      console.error('Fallback copy failed', err);
+    }
+    document.body.removeChild(textArea);
+  };
+
+  const copyToClipboard = async (text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (err) {
+        fallbackCopyText(text);
+      }
+    } else {
+      fallbackCopyText(text);
+    }
+  };
+
+  const copyRoomCode = async () => {
+    await copyToClipboard(roomId);
+    setCopiedCode(true);
+    showToast('Room code copied!', 'success');
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const copyInviteLink = async () => {
     const link = `${window.location.origin}/room/${roomId}`;
-    navigator.clipboard.writeText(link);
-    setCopied(true);
+    await copyToClipboard(link);
+    setCopiedLink(true);
     showToast('Invite link copied!', 'success');
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopiedLink(false), 2000);
   };
 
   // Filter messages based on search
   const filteredMessages = messages.filter(m => 
     m.text && m.text.toLowerCase().includes(chatSearch.toLowerCase())
   );
+
+  if (inWaitingRoom) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#07080d' }} className="fade-in">
+        <div className="bg-glow-wrapper">
+          <div className="glow-orb-1"></div>
+          <div className="glow-orb-2"></div>
+        </div>
+        <div className="glass-container" style={{ padding: '3rem', textAlign: 'center', maxWidth: '400px' }}>
+          <Shield size={48} color="var(--primary)" style={{ marginBottom: '1rem' }} />
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1rem', color: 'var(--text-main)' }}>Waiting Room</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: 1.5 }}>
+            You are in the waiting room. The host will let you in shortly.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <div className="animate-pulse" style={{ width: '8px', height: '8px', backgroundColor: 'var(--primary)', borderRadius: '50%', margin: '0 4px', animationDelay: '0s' }}></div>
+            <div className="animate-pulse" style={{ width: '8px', height: '8px', backgroundColor: 'var(--primary)', borderRadius: '50%', margin: '0 4px', animationDelay: '0.2s' }}></div>
+            <div className="animate-pulse" style={{ width: '8px', height: '8px', backgroundColor: 'var(--primary)', borderRadius: '50%', margin: '0 4px', animationDelay: '0.4s' }}></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div ref={roomContainerRef} style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#07080d' }} className="fade-in">
@@ -923,8 +1373,12 @@ const Room = () => {
           }}>
             <span style={{ color: 'var(--text-muted)' }}>Code:</span>
             <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{roomId}</span>
-            <button onClick={copyInvite} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: copied ? 'var(--success)' : 'var(--text-muted)' }} title="Copy invite link">
-              {copied ? <Check size={14} /> : <Copy size={14} />}
+            <button onClick={copyRoomCode} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: copiedCode ? 'var(--success)' : 'var(--text-muted)' }} title="Copy room code">
+              {copiedCode ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+            <div style={{ width: '1px', height: '14px', background: 'rgba(255,255,255,0.2)' }} />
+            <button onClick={copyInviteLink} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: copiedLink ? 'var(--success)' : 'var(--text-muted)' }} title="Copy invite link">
+              {copiedLink ? <Check size={14} /> : <Link2 size={14} />}
             </button>
           </div>
 
@@ -939,7 +1393,7 @@ const Room = () => {
           </button>
 
           {/* Leave Button */}
-          <button onClick={() => navigate('/dashboard')} className="btn btn-danger" style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', borderRadius: '8px' }}>
+          <button onClick={handleEndMeeting} className="btn btn-danger" style={{ padding: '0.45rem 1rem', fontSize: '0.85rem', borderRadius: '8px' }}>
             <PhoneOff size={16} />
             <span>End</span>
           </button>
@@ -979,7 +1433,7 @@ const Room = () => {
             maxHeight: '100%'
           }}>
             {/* Local Video Stream Container */}
-            <div className="video-card">
+            <div className={`video-card ${isSpeaking ? 'speaking-active' : ''}`} style={isSpeaking ? { boxShadow: '0 0 15px var(--primary)', border: '2px solid var(--primary)' } : {}}>
               {localStream ? (
                 <video 
                   ref={(el) => {
@@ -1054,6 +1508,25 @@ const Room = () => {
             ))}
           </div>
 
+          {/* Floating Emojis Overlay */}
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 10 }}>
+            {floatingEmojis.map(({ id, emoji }) => (
+              <div
+                key={id}
+                className="floating-emoji"
+                style={{
+                  position: 'absolute',
+                  bottom: '20px',
+                  left: `${50 + (Math.random() * 30 - 15)}%`, // Randomize horizontal position around center
+                  fontSize: '2.5rem',
+                  animation: 'floatUp 4s forwards ease-out'
+                }}
+              >
+                {emoji}
+              </div>
+            ))}
+          </div>
+
           {/* Subtitles Overlay */}
           {isCaptionsEnabled && captionsText && (
             <div className="live-captions-container">
@@ -1097,6 +1570,10 @@ const Room = () => {
               <Sparkles size={14} />
               <span>AI Panel</span>
             </button>
+            <button onClick={() => setActiveTab('timeline')} style={{ flex: 1, background: 'none', border: 'none', padding: '0.85rem', color: activeTab === 'timeline' ? 'var(--primary)' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', borderBottom: activeTab === 'timeline' ? '2px solid var(--primary)' : 'none', fontSize: '0.85rem', transition: 'var(--transition-smooth)' }}>
+              <List size={14} />
+              <span>Timeline</span>
+            </button>
             <button onClick={() => setActiveTab('participants')} style={{ flex: 1, background: 'none', border: 'none', padding: '0.85rem', color: activeTab === 'participants' ? 'var(--primary)' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', borderBottom: activeTab === 'participants' ? '2px solid var(--primary)' : 'none', fontSize: '0.85rem', transition: 'var(--transition-smooth)' }}>
               <Users size={14} />
               <span>Users</span>
@@ -1123,7 +1600,10 @@ const Room = () => {
                 </div>
 
                 {/* Message Log */}
-                <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '0.75rem', maxHeight: 'calc(100vh - 350px)' }}>
+                <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '0.75rem', maxHeight: 'calc(100vh - 350px)' }} onScroll={handleScrollChat}>
+                  {!hasMoreMessages && filteredMessages.length > 0 && (
+                    <div style={{ textAlign: 'center', fontSize: '0.7rem', color: 'var(--text-muted)' }}>Start of conversation</div>
+                  )}
                   {filteredMessages.length === 0 ? (
                     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', textAlign: 'center', padding: '2rem 1rem' }}>
                       <MessageCircle size={28} style={{ opacity: 0.3, marginBottom: '0.5rem' }} />
@@ -1132,9 +1612,12 @@ const Room = () => {
                   ) : (
                     filteredMessages.map((msg, i) => {
                       const isMe = msg.sender?._id === user._id;
-                      const isFile = msg.text && msg.text.startsWith('data:');
+                      const isFile = msg.type === 'file' || (msg.text && msg.text.startsWith('data:'));
+                      const isImage = msg.type === 'image' || (msg.text && msg.text.startsWith('data:image'));
+                      const isVoice = msg.type === 'voice';
+
                       return (
-                        <div key={msg._id || i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                        <div id={`msg-${msg._id}`} key={msg._id || i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
                           {!isMe && (
                             <div style={{
                               width: '28px',
@@ -1156,10 +1639,16 @@ const Room = () => {
                               {!msg.sender?.profilePicture && (msg.sender?.username || 'P').substring(0, 2).toUpperCase()}
                             </div>
                           )}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignSelf: isMe ? 'flex-end' : 'flex-start' }}>
-                            <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', alignSelf: isMe ? 'flex-end' : 'flex-start', padding: '0 4px' }}>
-                              {msg.sender?.username || 'User'} • {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
-                            </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignSelf: isMe ? 'flex-end' : 'flex-start', width: '100%' }}>
+                            <div style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', padding: '0 4px' }}>
+                                {msg.sender?.username || 'User'} 
+                                {msg.receiver && <span style={{ color: 'var(--primary)' }}> (Direct)</span>} 
+                                 • {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                              </span>
+                            </div>
+                            
+                            {/* Message Bubble */}
                             <div style={{
                               background: isMe ? 'var(--primary-gradient)' : 'rgba(255,255,255,0.05)',
                               color: '#fff',
@@ -1168,20 +1657,44 @@ const Room = () => {
                               fontSize: '0.85rem',
                               border: isMe ? 'none' : '1px solid var(--border-light)',
                               wordBreak: 'break-word',
+                              whiteSpace: 'pre-wrap',
                               lineHeight: 1.4,
                               position: 'relative'
                             }}>
-                              {isFile ? (
-                                msg.text.startsWith('data:image/') ? (
-                                  <img src={msg.text} alt="Attached image" style={{ maxWidth: '100%', borderRadius: '6px', cursor: 'pointer' }} onClick={() => window.open(msg.text)} />
-                                ) : (
-                                  <a href={msg.text} download="attachment" style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: '6px', textDecoration: 'underline' }}>
-                                    <FileText size={14} />
-                                    <span>Download Attachment</span>
-                                  </a>
-                                )
+                              {/* Reply Preview */}
+                              {msg.replyTo && (
+                                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: '4px', marginBottom: '6px', fontSize: '0.75rem', borderLeft: '3px solid var(--primary)', cursor: 'pointer' }}
+                                     onClick={() => document.getElementById(`msg-${msg.replyTo._id}`)?.scrollIntoView({ behavior: 'smooth' })}>
+                                  <strong style={{ color: 'var(--primary)' }}>{msg.replyTo.sender?.username}</strong>
+                                  <div style={{ opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+                                    {msg.replyTo.type === 'voice' ? '🎤 Voice Message' : msg.replyTo.type === 'image' ? '🖼️ Image' : msg.replyTo.type === 'file' ? '📎 File' : msg.replyTo.text}
+                                  </div>
+                                </div>
+                              )}
+
+                              {isVoice ? (
+                                <audio controls src={msg.text} style={{ height: '30px', outline: 'none' }} />
+                              ) : isImage ? (
+                                <img src={msg.text} alt="Attached" style={{ maxWidth: '100%', borderRadius: '6px', cursor: 'pointer', maxHeight: '150px' }} onClick={() => window.open(msg.text)} />
+                              ) : isFile ? (
+                                <a href={msg.text} target="_blank" rel="noopener noreferrer" download style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: '6px', textDecoration: 'underline' }}>
+                                  <FileText size={14} /><span>Download File</span>
+                                </a>
                               ) : (
-                                msg.text
+                                <span style={{ fontStyle: msg.isDeleted ? 'italic' : 'normal', opacity: msg.isDeleted ? 0.7 : 1 }}>
+                                  {msg.text}
+                                </span>
+                              )}
+
+                              {msg.isEdited && !msg.isDeleted && <span style={{ fontSize: '0.6rem', opacity: 0.7, marginLeft: '6px' }}>(edited)</span>}
+                              
+                              {/* Read Receipts & Status */}
+                              {isMe && !msg.isDeleted && (
+                                <span style={{ fontSize: '0.65rem', marginLeft: '6px', display: 'inline-flex', alignItems: 'center' }}>
+                                  {msg.status === 'sending' ? '⏳' : 
+                                   (msg.seenBy && msg.seenBy.length > 0) ? <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>✓✓</span> : 
+                                   '✓✓'}
+                                </span>
                               )}
 
                               {/* reactions list */}
@@ -1194,14 +1707,23 @@ const Room = () => {
                               )}
                             </div>
 
-                          {/* Quick Reactions bar hoverable */}
-                          <div style={{ display: 'flex', gap: '4px', opacity: 0.6, alignSelf: isMe ? 'flex-end' : 'flex-start', marginTop: '2px', padding: '0 4px' }}>
-                            {['👍', '❤️', '😂', '🔥'].map((emoji) => (
-                              <button key={emoji} onClick={() => sendReaction(msg._id, emoji)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', padding: '0' }} title="React">
-                                {emoji}
-                              </button>
-                            ))}
-                          </div>
+                          {/* Quick Reactions & Action bar */}
+                          {!msg.isDeleted && (
+                            <div style={{ display: 'flex', gap: '6px', opacity: 0.6, alignSelf: isMe ? 'flex-end' : 'flex-start', marginTop: '2px', padding: '0 4px', fontSize: '0.75rem' }}>
+                              {['👍', '❤️', '😂'].map((emoji) => (
+                                <button key={emoji} onClick={() => sendReaction(msg._id, emoji)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0' }} title="React">
+                                  {emoji}
+                                </button>
+                              ))}
+                              <button onClick={() => setReplyingTo(msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', color: 'var(--text-muted)' }} title="Reply">↩️</button>
+                              {isMe && (
+                                <>
+                                  <button onClick={() => { setEditingMessage(msg); setInputText(msg.text); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', color: 'var(--text-muted)' }} title="Edit">✏️</button>
+                                  <button onClick={() => socketRef.current.emit('delete-message', { messageId: msg._id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', color: 'var(--danger)' }} title="Delete">🗑️</button>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                       );
@@ -1224,37 +1746,111 @@ const Room = () => {
 
                 {/* Chat Inputs */}
                 <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: 'auto' }}>
-                  {/* Emoji Quick Tray */}
-                  <div style={{ display: 'flex', gap: '8px', fontSize: '1rem', paddingBottom: '4px' }}>
-                    {['👍', '❤️', '😂', '🔥', '😮', '👏'].map(emoji => (
-                      <button key={emoji} onClick={() => addEmoji(emoji)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0' }}>
-                        {emoji}
-                      </button>
-                    ))}
+                  
+                  {/* Reply Banner */}
+                  {replyingTo && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '8px', fontSize: '0.75rem', borderLeft: '3px solid var(--primary)' }}>
+                      <span>Replying to <strong>{replyingTo.sender?.username}</strong></span>
+                      <button onClick={() => setReplyingTo(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✖</button>
+                    </div>
+                  )}
+
+                  {/* Edit Banner */}
+                  {editingMessage && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '8px', fontSize: '0.75rem', borderLeft: '3px solid var(--warning)' }}>
+                      <span>Editing Message</span>
+                      <button onClick={() => { setEditingMessage(null); setInputText(''); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✖</button>
+                    </div>
+                  )}
+
+                  {/* Direct Message Selector */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <select value={directMessageTo} onChange={(e) => setDirectMessageTo(e.target.value)} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-light)', color: '#fff', fontSize: '0.75rem', padding: '4px', borderRadius: '4px', outline: 'none' }}>
+                      <option value="">To: Everyone (Public)</option>
+                      {roomDetails?.participants?.map(p => {
+                         if (p._id !== user._id) {
+                           return <option key={p._id} value={p._id}>To: {p.username} (Direct)</option>
+                         }
+                         return null;
+                      })}
+                    </select>
+
+                    <div style={{ display: 'flex', gap: '8px', fontSize: '1rem', paddingBottom: '4px' }}>
+                      {['👍', '❤️', '😂', '🔥', '😮', '👏'].map(emoji => (
+                        <button key={emoji} onClick={() => addEmoji(emoji)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0' }}>
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Input form */}
-                  <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    {/* Attachment Input clip */}
-                    <label style={{ cursor: 'pointer', display: 'flex', padding: '6px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-light)' }} title="Attach file or image">
-                      <Paperclip size={16} color="var(--text-muted)" />
-                      <input
-                        type="file"
-                        onChange={handleFileUpload}
-                        style={{ display: 'none' }}
-                        accept="image/*,application/pdf,text/plain"
-                      />
-                    </label>
+                  <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', position: 'relative' }}>
+                    {showEmojiPicker && (
+                      <div style={{ position: 'absolute', bottom: '50px', right: 0, zIndex: 100 }}>
+                        <EmojiPicker 
+                          onEmojiClick={(emojiObj) => { 
+                            addEmoji(emojiObj.emoji); 
+                            setShowEmojiPicker(false); 
+                          }} 
+                          theme="dark"
+                          width={280}
+                          height={350}
+                        />
+                      </div>
+                    )}
 
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="Type a message..."
-                      value={inputText}
-                      onChange={handleInputChange}
-                      style={{ flexGrow: 1, padding: '0.5rem 0.75rem', fontSize: '0.85rem', borderRadius: '10px' }}
-                    />
-                    <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem', width: '36px', height: '36px', borderRadius: '10px' }} disabled={!inputText.trim()}>
+                    {/* Attachment Input */}
+                    {isUploading ? (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--primary)' }}>Uploading...</span>
+                    ) : (
+                      <label style={{ cursor: 'pointer', display: 'flex', padding: '6px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-light)' }} title="Attach file or image">
+                        <Paperclip size={16} color="var(--text-muted)" />
+                        <input
+                          type="file"
+                          onChange={handleFileUpload}
+                          style={{ display: 'none' }}
+                          accept="*/*"
+                        />
+                      </label>
+                    )}
+
+                    {/* Emoji toggle icon */}
+                    <button 
+                      type="button" 
+                      onClick={() => setShowEmojiPicker(prev => !prev)} 
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', padding: '6px', color: showEmojiPicker ? 'var(--primary)' : 'var(--text-muted)' }}
+                      title="Add emoji"
+                    >
+                      <Smile size={16} />
+                    </button>
+                    
+                    {/* Voice Memo toggle */}
+                    <button 
+                      type="button" 
+                      onClick={toggleVoiceRecording} 
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', padding: '6px', color: isRecordingVoice ? 'var(--danger)' : 'var(--text-muted)' }}
+                      title={isRecordingVoice ? "Stop Recording" : "Record Voice Message"}
+                    >
+                      <Mic size={16} style={{ animation: isRecordingVoice ? 'pulse 1s infinite alternate' : 'none' }} />
+                    </button>
+
+                    {isRecordingVoice ? (
+                      <div style={{ flexGrow: 1, color: 'var(--danger)', fontSize: '0.85rem', display: 'flex', alignItems: 'center' }}>
+                        <span style={{ marginRight: '8px', width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)', animation: 'pulse 1s infinite alternate' }}></span>
+                        Recording: {voiceRecordingTime}s
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Type a message..."
+                        value={inputText}
+                        onChange={handleInputChange}
+                        style={{ flexGrow: 1, padding: '0.5rem 0.75rem', fontSize: '0.85rem', borderRadius: '10px' }}
+                      />
+                    )}
+                    <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem', width: '36px', height: '36px', borderRadius: '10px' }} disabled={isRecordingVoice || (!inputText.trim() && !isRecordingVoice)}>
                       <Send size={14} />
                     </button>
                   </form>
@@ -1331,6 +1927,119 @@ const Room = () => {
               </div>
             )}
 
+            {/* VIEW: TIMELINE */}
+            {activeTab === 'timeline' && (
+              <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, height: '100%', gap: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                  <select 
+                    value={timelineFilter} 
+                    onChange={(e) => setTimelineFilter(e.target.value)}
+                    style={{ padding: '0.45rem', fontSize: '0.75rem', borderRadius: '8px', background: 'var(--surface-light)', color: 'var(--text-main)', border: '1px solid var(--border-light)' }}
+                  >
+                    <option value="All">All Events</option>
+                    <option value="Decisions">Decisions</option>
+                    <option value="Tasks">Tasks</option>
+                    <option value="Highlights">Highlights</option>
+                  </select>
+                  <button 
+                    onClick={async () => {
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(timelineEvents, null, 2));
+                      const downloadAnchorNode = document.createElement('a');
+                      downloadAnchorNode.setAttribute("href", dataStr);
+                      downloadAnchorNode.setAttribute("download", "meeting-timeline.json");
+                      document.body.appendChild(downloadAnchorNode);
+                      downloadAnchorNode.click();
+                      downloadAnchorNode.remove();
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '0.45rem 0.75rem', borderRadius: '8px', background: 'var(--surface-light)', color: 'var(--text-main)', border: '1px solid var(--border-light)', cursor: 'pointer' }}
+                  >
+                    <Download size={14} /> JSON
+                  </button>
+                  <button 
+                    onClick={() => window.print()}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '0.45rem 0.75rem', borderRadius: '8px', background: 'var(--primary)', color: 'white', border: 'none', cursor: 'pointer' }}
+                  >
+                    PDF
+                  </button>
+                </div>
+                
+                <div style={{ position: 'relative' }}>
+                  <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)' }} />
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="Search timeline..."
+                    value={timelineSearch}
+                    onChange={(e) => setTimelineSearch(e.target.value)}
+                    style={{ width: '100%', padding: '0.45rem 1rem 0.45rem 2.2rem', fontSize: '0.8rem', borderRadius: '8px' }}
+                  />
+                </div>
+
+                <div style={{ flexGrow: 1, overflowY: 'auto', paddingRight: '8px', position: 'relative' }}>
+                  <div style={{ position: 'absolute', left: '16px', top: 0, bottom: 0, width: '2px', backgroundColor: 'var(--border-light)', zIndex: 0 }}></div>
+                  {timelineEvents
+                    .filter(e => {
+                       if (timelineFilter === 'Decisions' && e.type !== 'decision') return false;
+                       if (timelineFilter === 'Tasks' && e.type !== 'task') return false;
+                       if (timelineFilter === 'Highlights' && e.type !== 'highlight') return false;
+                       if (timelineSearch && !e.title.toLowerCase().includes(timelineSearch.toLowerCase()) && !e.description.toLowerCase().includes(timelineSearch.toLowerCase())) return false;
+                       return true;
+                    })
+                    .map((event, idx) => {
+                      let IconComponent = Clock;
+                      if (event.icon === 'CheckCircle') IconComponent = CheckCircle;
+                      if (event.icon === 'ListTodo') IconComponent = List;
+                      if (event.icon === 'Star') IconComponent = Star;
+                      if (event.icon === 'Hand') IconComponent = Hand;
+                      if (event.icon === 'LogOut') IconComponent = LogOut;
+                      if (event.icon === 'Video') IconComponent = VideoIcon;
+                      if (event.icon === 'Monitor') IconComponent = Monitor;
+
+                      return (
+                        <div key={idx} style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', position: 'relative', zIndex: 1 }}>
+                          <div style={{ width: '34px', height: '34px', borderRadius: '50%', backgroundColor: event.color || 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '3px solid var(--surface-dark)', color: 'white' }}>
+                            <IconComponent size={14} />
+                          </div>
+                          <div style={{ background: 'var(--surface-light)', padding: '0.75rem', borderRadius: '8px', flexGrow: 1, border: '1px solid var(--border-light)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: event.color || 'var(--text-main)' }}>{event.title}</h4>
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{new Date(event.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>{event.description}</p>
+                          </div>
+                        </div>
+                      )
+                    })
+                  }
+                  {timelineEvents.length === 0 && (
+                     <div style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                        No events on timeline yet.
+                     </div>
+                  )}
+                </div>
+                
+                <button 
+                  onClick={async () => {
+                    try {
+                       setAiLoading(true);
+                       const res = await api.post(`/timeline/${roomId}/summary`);
+                       setAiSummary({ keyHighlights: [res.data.summary], smartRecommendations: ['Review timeline for details.']});
+                       setActiveTab('ai');
+                    } catch (err) {
+                       showToast('Failed to generate summary', 'error');
+                    } finally {
+                       setAiLoading(false);
+                    }
+                  }}
+                  disabled={aiLoading || timelineEvents.length === 0}
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '0.75rem', fontSize: '0.85rem' }}
+                >
+                  {aiLoading ? 'Generating...' : <><BrainCircuit size={16} /> Generate AI Summary</>}
+                </button>
+              </div>
+            )}
+
             {/* VIEW 3: PARTICIPANTS & ANALYTICS */}
             {activeTab === 'participants' && (
               <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1362,14 +2071,67 @@ const Room = () => {
                           </div>
                           <span style={{ fontSize: '0.85rem' }}>{peerUser?.username}</span>
                         </div>
-                        {/* Mock network latency */}
-                        <span style={{ fontSize: '0.7rem', color: 'var(--success)' }}>
-                          24ms (Excellent)
-                        </span>
+                        {canManageRoom ? (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button onClick={() => socketRef.current.emit('mute-user-mic', { targetSocketId: socketId })} className="btn btn-secondary" style={{ padding: '4px', fontSize: '0.65rem' }}>Mute</button>
+                            <button onClick={() => socketRef.current.emit('kick-user', { targetSocketId: socketId })} className="btn btn-danger" style={{ padding: '4px', fontSize: '0.65rem' }}>Kick</button>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--success)' }}>
+                            24ms (Excellent)
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
+
+                {/* Waiting Room Management */}
+                {canManageRoom && waitingUsers.length > 0 && (
+                  <div>
+                    <h3 style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.75rem', color: 'var(--warning)' }}>Waiting Room ({waitingUsers.length})</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {waitingUsers.map(({ socketId, user: wUser }) => (
+                        <div key={socketId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '8px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ width: '24px', height: '24px', borderRadius: '50%', backgroundColor: wUser?.avatarColor || 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.6rem' }}>
+                              {wUser?.username?.substring(0, 2).toUpperCase()}
+                            </div>
+                            <span style={{ fontSize: '0.8rem' }}>{wUser?.username}</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button onClick={() => {
+                              socketRef.current.emit('admit-user', { targetSocketId: socketId, user: wUser, roomId });
+                              setWaitingUsers(prev => prev.filter(u => u.socketId !== socketId));
+                            }} className="btn btn-primary" style={{ padding: '4px 8px', fontSize: '0.65rem' }}>Admit</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Host Controls */}
+                {canManageRoom && (
+                  <div className="glass-container" style={{ padding: '1.25rem', border: '1px solid var(--border-light)' }}>
+                    <h3 style={{ fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                      <Shield size={16} color="var(--primary)" />
+                      Host Controls
+                    </h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <button onClick={() => socketRef.current.emit('lock-room', { isLocked: !roomDetails?.isLocked })} className="btn btn-secondary" style={{ width: '100%', padding: '0.65rem', justifyContent: 'center' }}>
+                        {roomDetails?.isLocked ? 'Unlock Room' : 'Lock Room'}
+                      </button>
+                      <button onClick={() => {
+                        if (window.confirm('Are you sure you want to end the meeting for everyone?')) {
+                          socketRef.current.emit('end-meeting');
+                        }
+                      }} className="btn btn-danger" style={{ width: '100%', padding: '0.65rem', justifyContent: 'center' }}>
+                        End Meeting for All
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Stream Analytics */}
                 <div className="glass-container" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '10px', border: '1px solid var(--border-light)' }}>
@@ -1403,6 +2165,37 @@ const Room = () => {
           </div>
         </aside>
       </div>
+
+      {/* Live Translation Captions Overlay */}
+      {isCaptionsEnabled && liveCaption && (
+        <div style={{
+          position: 'absolute',
+          bottom: '100px', // above toolbar
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 50,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(10px)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: '12px',
+          padding: '12px 24px',
+          maxWidth: '80%',
+          textAlign: 'center',
+          animation: 'slideUp 0.3s ease-out'
+        }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 'bold', marginBottom: '4px' }}>
+            {liveCaption.speaker}
+          </div>
+          <div style={{ fontSize: '1.2rem', color: '#fff', fontWeight: 500, lineHeight: 1.4 }}>
+            {liveCaption.translatedText}
+          </div>
+          {liveCaption.language !== 'en' && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+              Original: {liveCaption.originalText}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Floating Action Controls Footer Bar */}
       <footer className="glass-container" style={{
@@ -1469,6 +2262,62 @@ const Room = () => {
         >
           <Circle size={20} fill={isRecording ? 'var(--text-main)' : 'none'} color={isRecording ? 'none' : 'var(--danger)'} />
         </button>
+
+        {/* Toggle PiP */}
+        <button
+          onClick={togglePip}
+          className="btn btn-icon-only btn-secondary"
+          style={{ width: '48px', height: '48px' }}
+          title="Picture in Picture"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><rect x="12" y="12" width="7" height="5"></rect></svg>
+        </button>
+
+        {/* Toggle Captions / Live Translation */}
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <button
+            onClick={toggleCaptions}
+            className={`btn btn-icon-only ${isCaptionsEnabled ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ width: '48px', height: '48px', border: isCaptionsEnabled ? 'none' : '1px solid var(--border-light)' }}
+            title={isCaptionsEnabled ? 'Disable Captions' : 'Enable Live Translation'}
+          >
+            <Languages size={20} />
+          </button>
+          
+          {isCaptionsEnabled && (
+            <select
+              value={targetLanguage}
+              onChange={(e) => setTargetLanguage(e.target.value)}
+              style={{
+                marginLeft: '8px',
+                padding: '8px',
+                borderRadius: '8px',
+                background: 'rgba(255,255,255,0.1)',
+                border: '1px solid var(--border-light)',
+                color: '#fff',
+                fontSize: '0.8rem',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+              title="Translate to..."
+            >
+              {SUPPORTED_LANGUAGES.map(l => (
+                <option key={l.code} value={l.code} style={{ color: '#000' }}>{l.label}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* Reactions Tray Trigger */}
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginLeft: '1rem' }}>
+          <div style={{ display: 'flex', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '24px', border: '1px solid var(--border-light)' }}>
+            {['👍', '❤️', '👏', '🎉'].map(emoji => (
+              <button key={emoji} onClick={() => sendFloatingEmoji(emoji)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', padding: '0 4px', transition: 'transform 0.2s' }} className="hover-scale">
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
       </footer>
 
       {/* Floating Keyframe animations styling */}
@@ -1476,6 +2325,18 @@ const Room = () => {
         @keyframes pulse {
           0% { opacity: 0.5; }
           100% { opacity: 1; }
+        }
+        @keyframes floatUp {
+          0% { transform: translateY(0) scale(0.8); opacity: 0; }
+          20% { opacity: 1; transform: translateY(-20px) scale(1.1); }
+          80% { opacity: 0.8; transform: translateY(-150px) scale(1); }
+          100% { transform: translateY(-200px) scale(0.8); opacity: 0; }
+        }
+        .hover-scale {
+          transition: transform 0.2s ease-in-out;
+        }
+        .hover-scale:hover {
+          transform: scale(1.3);
         }
         @media (max-width: 768px) {
           .workspace-split {

@@ -35,6 +35,11 @@ const userSchema = new mongoose.Schema(
         const colors = ['#8b5cf6', '#06b6d4', '#ec4899', '#10b981', '#f59e0b', '#3b82f6'];
         return colors[Math.floor(Math.random() * colors.length)];
       }
+    },
+    role: {
+      type: String,
+      enum: ['Host', 'Co-Host', 'Participant'],
+      default: 'Participant',
     }
   },
   {
@@ -45,11 +50,12 @@ const userSchema = new mongoose.Schema(
 // Encrypt password using bcrypt before saving
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) {
-    next();
+    return next();
   }
 
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+  next();
 });
 
 // Match user entered password to hashed password in database

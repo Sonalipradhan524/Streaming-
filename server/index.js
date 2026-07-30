@@ -6,6 +6,9 @@ const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 const { errorHandler } = require('./middleware/errorHandler');
 const socketHandler = require('./socket/socketHandler');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
 
 // Load environment variables
 dotenv.config();
@@ -29,9 +32,24 @@ app.use(cors({
   origin: '*', // Allow all origins for convenience, restrict in production
 }));
 
-// Body Parsers
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// Security Middleware
+app.use(helmet());
+app.use(mongoSanitize());
+
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // Limit each IP to 1000 requests per windowMs
+});
+app.use('/api', limiter);
+
+// Body Parsers (Increased limit for base64 if needed, though we use multer mostly)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: false }));
+
+// Static folder for file uploads
+const path = require('path');
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Basic Health Check Route
 app.get('/', (req, res) => {
@@ -41,7 +59,9 @@ app.get('/', (req, res) => {
 // API Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/rooms', require('./routes/roomRoutes'));
+app.use('/api/timeline', require('./routes/timelineRoutes'));
 app.use('/api/activities', require('./routes/activityRoutes'));
+app.use('/api/upload', require('./routes/uploadRoutes'));
 
 // Socket.IO Handler
 global.ioInstance = io;
