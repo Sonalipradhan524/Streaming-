@@ -1385,29 +1385,7 @@ const Room = () => {
     m.text && m.text.toLowerCase().includes(chatSearch.toLowerCase())
   );
 
-  if (inWaitingRoom) {
-    return (
-      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#07080d' }} className="fade-in">
-        <div className="bg-glow-wrapper">
-          <div className="glow-orb-1"></div>
-          <div className="glow-orb-2"></div>
-        </div>
-        <div className="glass-container" style={{ padding: '3rem', textAlign: 'center', maxWidth: '400px' }}>
-          <Shield size={48} color="var(--primary)" style={{ marginBottom: '1rem' }} />
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1rem', color: 'var(--text-main)' }}>Waiting Room</h2>
-          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: 1.5 }}>
-            You are in the waiting room. The host will let you in shortly.
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <div className="animate-pulse" style={{ width: '8px', height: '8px', backgroundColor: 'var(--primary)', borderRadius: '50%', margin: '0 4px', animationDelay: '0s' }}></div>
-            <div className="animate-pulse" style={{ width: '8px', height: '8px', backgroundColor: 'var(--primary)', borderRadius: '50%', margin: '0 4px', animationDelay: '0.2s' }}></div>
-            <div className="animate-pulse" style={{ width: '8px', height: '8px', backgroundColor: 'var(--primary)', borderRadius: '50%', margin: '0 4px', animationDelay: '0.4s' }}></div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // Waiting room UI removed to force instant join
   if (!hasJoined) {
     return (
       <JoinPreview
