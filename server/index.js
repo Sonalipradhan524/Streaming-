@@ -62,6 +62,7 @@ app.use('/api/rooms', require('./routes/roomRoutes'));
 app.use('/api/timeline', require('./routes/timelineRoutes'));
 app.use('/api/activities', require('./routes/activityRoutes'));
 app.use('/api/upload', require('./routes/uploadRoutes'));
+app.use('/api/ai', require('./routes/aiRoutes'));
 
 // Socket.IO Handler
 global.ioInstance = io;

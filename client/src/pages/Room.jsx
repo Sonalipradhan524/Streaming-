@@ -5,6 +5,7 @@ import EmojiPicker from 'emoji-picker-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import JoinPreview from '../components/JoinPreview';
 import {
   Mic,
   MicOff,
@@ -42,7 +43,8 @@ import {
   Star,
   LogOut,
   CheckCircle,
-  Hand
+  Hand,
+  X
 } from 'lucide-react';
 
 const SUPPORTED_LANGUAGES = [
@@ -63,6 +65,9 @@ const Room = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { showToast } = useToast();
+
+  const [hasJoined, setHasJoined] = useState(false);
+  const [deviceSelections, setDeviceSelections] = useState(null);
 
   // State variables
   const [roomDetails, setRoomDetails] = useState(null);
@@ -129,7 +134,10 @@ const Room = () => {
   const [isCaptionsEnabled, setIsCaptionsEnabled] = useState(false);
   const [captionsText, setCaptionsText] = useState('');
   const [liveCaption, setLiveCaption] = useState(null);
-  const [targetLanguage, setTargetLanguage] = useState('en');
+  const [targetLanguage, setTargetLanguage] = useState('es');
+
+  // Mobile layout state
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   const recognitionRef = useRef(null);
   const captionTimeoutRef = useRef(null);
 
@@ -160,6 +168,12 @@ const Room = () => {
   const roomContainerRef = useRef(null);
   const queuedCandidatesRef = useRef({}); // { socketId: [RTCIceCandidate] }
   const isCaptionsEnabledRef = useRef(false);
+
+  // Inject Meeting Context for AI Assistant
+  useEffect(() => {
+    window.meetingContext = { roomId, messages, timelineEvents, user };
+    return () => { window.meetingContext = null; };
+  }, [roomId, messages, timelineEvents, user]);
 
   // WebRTC ICE servers configuration
   const iceConfiguration = {
@@ -247,13 +261,30 @@ const Room = () => {
 
   // 3. Initialize Media (Camera & Mic)
   useEffect(() => {
+    if (!hasJoined || !deviceSelections) return;
+
     const startMedia = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 1280, height: 720, frameRate: { ideal: 30 } },
-          audio: true
-        });
+        const constraints = {
+          video: deviceSelections.isCamEnabled ? {
+            deviceId: deviceSelections.videoDeviceId ? { exact: deviceSelections.videoDeviceId } : undefined,
+            width: 1280, height: 720, frameRate: { ideal: 30 }
+          } : false,
+          audio: deviceSelections.isMicEnabled ? {
+            deviceId: deviceSelections.audioDeviceId ? { exact: deviceSelections.audioDeviceId } : undefined
+          } : false
+        };
+
+        let stream;
+        if (constraints.audio || constraints.video) {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } else {
+          stream = new MediaStream();
+        }
         
+        setIsMicEnabled(deviceSelections.isMicEnabled);
+        setIsCamEnabled(deviceSelections.isCamEnabled);
+
         setLocalStream(stream);
         localStreamRef.current = stream;
         
@@ -262,31 +293,33 @@ const Room = () => {
         }
 
         // Speaker Detection
-        try {
-          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 512;
-          const source = audioCtx.createMediaStreamSource(stream);
-          source.connect(analyser);
-          audioContextRef.current = audioCtx;
-          analyserNodeRef.current = analyser;
-          
-          const dataArray = new Uint8Array(analyser.frequencyBinCount);
-          const checkAudioLevel = () => {
-            if (analyserNodeRef.current && localStreamRef.current?.getAudioTracks()[0]?.enabled) {
-              analyserNodeRef.current.getByteFrequencyData(dataArray);
-              let sum = 0;
-              for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-              const average = sum / dataArray.length;
-              setIsSpeaking(average > 10);
-            } else {
-              setIsSpeaking(false);
-            }
-            requestAnimationFrame(checkAudioLevel);
-          };
-          checkAudioLevel();
-        } catch(e) {
-          console.error('AudioContext error:', e);
+        if (stream.getAudioTracks().length > 0) {
+          try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 512;
+            const source = audioCtx.createMediaStreamSource(stream);
+            source.connect(analyser);
+            audioContextRef.current = audioCtx;
+            analyserNodeRef.current = analyser;
+            
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            const checkAudioLevel = () => {
+              if (analyserNodeRef.current && localStreamRef.current?.getAudioTracks()[0]?.enabled) {
+                analyserNodeRef.current.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+                const average = sum / dataArray.length;
+                setIsSpeaking(average > 10);
+              } else {
+                setIsSpeaking(false);
+              }
+              requestAnimationFrame(checkAudioLevel);
+            };
+            checkAudioLevel();
+          } catch(e) {
+            console.error('AudioContext error:', e);
+          }
         }
         
         setMediaError('');
@@ -321,7 +354,7 @@ const Room = () => {
       Object.values(peersRef.current).forEach(pc => pc.close());
       peersRef.current = {};
     };
-  }, [roomId]);
+  }, [roomId, hasJoined, deviceSelections]);
 
   // Scroll chat to bottom when messages update
   useEffect(() => {
@@ -329,6 +362,15 @@ const Room = () => {
       chatBottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
+
+  // Ensure local video element always attaches the stream
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      if (localVideoRef.current.srcObject !== localStream) {
+        localVideoRef.current.srcObject = localStream;
+      }
+    }
+  }, [localStream, hasJoined]);
 
   // 4. Socket Connection & WebRTC Signaling
   const connectSocket = () => {
@@ -440,9 +482,14 @@ const Room = () => {
       setTimeout(scrollToBottom, 100);
     });
 
-    socketRef.current.on('message-delivered', ({ tempId, _id }) => {
+    socketRef.current.on('chat-history', (history) => {
+      setMessages(history);
+      setTimeout(scrollToBottom, 100);
+    });
+
+    socketRef.current.on('message-delivered', ({ tempId, message }) => {
       setMessages((prev) => prev.map(msg => 
-        msg._id === tempId ? { ...msg, _id, status: 'delivered' } : msg
+        msg._id === tempId ? { ...message, status: 'delivered' } : msg
       ));
     });
 
@@ -645,22 +692,23 @@ const Room = () => {
     };
 
     pc.ontrack = (event) => {
-      console.log('Received remote stream track from:', peerUser.username);
-      let remoteStream = event.streams[0];
-      
-      if (!remoteStream) {
-        remoteStream = new MediaStream();
-        remoteStream.addTrack(event.track);
-      }
+      console.log('Received remote stream track from:', peerUser.username, event.track.kind);
       
       setRemotePeers(prev => {
         const index = prev.findIndex(p => p.socketId === socketId);
         if (index > -1) {
           const updated = [...prev];
-          updated[index] = { ...updated[index], stream: remoteStream };
+          let existingStream = updated[index].stream;
+          if (existingStream) {
+            existingStream.addTrack(event.track);
+          } else {
+            existingStream = event.streams[0] || new MediaStream([event.track]);
+          }
+          updated[index] = { ...updated[index], stream: existingStream };
           return updated;
         } else {
-          return [...prev, { socketId, user: peerUser, stream: remoteStream }];
+          const newStream = event.streams[0] || new MediaStream([event.track]);
+          return [...prev, { socketId, user: peerUser, stream: newStream }];
         }
       });
     };
@@ -681,11 +729,30 @@ const Room = () => {
       setMediaError('');
       showToast('Camera and microphone connected!', 'success');
 
-      // Update any active peer connections with the tracks
-      Object.values(peersRef.current).forEach((pc) => {
+      // Update any active peer connections with the tracks and renegotiate
+      Object.entries(peersRef.current).forEach(async ([peerSocketId, pc]) => {
+        const senders = pc.getSenders();
         stream.getTracks().forEach((track) => {
-          pc.addTrack(track, stream);
+          const existingSender = senders.find(s => s.track && s.track.kind === track.kind);
+          if (existingSender) {
+            existingSender.replaceTrack(track);
+          } else {
+            pc.addTrack(track, stream);
+          }
         });
+        
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          if (socketRef.current) {
+            socketRef.current.emit('send-signal', {
+              to: peerSocketId,
+              signal: { type: 'offer', sdp: pc.localDescription }
+            });
+          }
+        } catch (e) {
+          console.error('Error renegotiating media:', e);
+        }
       });
       
       return stream;
@@ -1319,6 +1386,20 @@ const Room = () => {
     );
   }
 
+  if (!hasJoined) {
+    return (
+      <JoinPreview
+        roomDetails={roomDetails}
+        user={user}
+        onJoin={(selections) => {
+          setDeviceSelections(selections);
+          setHasJoined(true);
+        }}
+        onCancel={() => navigate('/dashboard')}
+      />
+    );
+  }
+
   return (
     <div ref={roomContainerRef} style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#07080d' }} className="fade-in">
       <div className="bg-glow-wrapper">
@@ -1327,7 +1408,7 @@ const Room = () => {
       </div>
 
       {/* Header Panel */}
-      <header className="glass-container" style={{
+      <header className="glass-container header-controls" style={{
         margin: '1rem',
         padding: '0.75rem 1.5rem',
         display: 'flex',
@@ -1401,7 +1482,7 @@ const Room = () => {
       </header>
 
       {/* Streaming workspace */}
-      <div style={{ display: 'flex', flexGrow: 1, padding: '0 1rem 1rem 1rem', gap: '1rem', overflow: 'hidden' }} className="workspace-split">
+      <div style={{ display: 'flex', flexGrow: 1, padding: '0 1rem 1rem 1rem', gap: '1rem', overflow: 'hidden' }} className="workspace-split main-room-content">
         
         {/* Left Column: Streams Grid */}
         <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: mediaError ? 'flex-start' : 'center', position: 'relative' }}>
@@ -1536,18 +1617,21 @@ const Room = () => {
         </div>
 
         {/* Right Column: Sidebar Workspace */}
-        <aside className="glass-container sidebar-container" style={{
+        <div className={`sidebar-overlay ${isMobileChatOpen ? 'mobile-open' : ''}`} onClick={() => setIsMobileChatOpen(false)}></div>
+        <aside className={`glass-container sidebar-container room-chat-sidebar ${isMobileChatOpen ? 'mobile-open' : ''}`} style={{
           width: '340px',
           display: 'flex',
           flexDirection: 'column',
           border: '1px solid var(--border-light)',
           borderRadius: '12px',
-          flexShrink: 0
+          flexShrink: 0,
+          background: 'var(--bg-dark)'
         }}>
           
           {/* Tab buttons */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)' }}>
-            <button onClick={() => { setActiveTab('chat'); setUnreadCount(0); }} style={{ flex: 1, background: 'none', border: 'none', padding: '0.85rem', color: activeTab === 'chat' ? 'var(--primary)' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', borderBottom: activeTab === 'chat' ? '2px solid var(--primary)' : 'none', fontSize: '0.85rem', transition: 'var(--transition-smooth)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-light)' }}>
+            <div style={{ display: 'flex', flexGrow: 1 }}>
+              <button onClick={() => { setActiveTab('chat'); setUnreadCount(0); }} style={{ flex: 1, background: 'none', border: 'none', padding: '0.85rem', color: activeTab === 'chat' ? 'var(--primary)' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', borderBottom: activeTab === 'chat' ? '2px solid var(--primary)' : 'none', fontSize: '0.85rem', transition: 'var(--transition-smooth)' }}>
               <MessageSquare size={14} />
               <span>Chat</span>
               {unreadCount > 0 && (
@@ -1577,6 +1661,10 @@ const Room = () => {
             <button onClick={() => setActiveTab('participants')} style={{ flex: 1, background: 'none', border: 'none', padding: '0.85rem', color: activeTab === 'participants' ? 'var(--primary)' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', borderBottom: activeTab === 'participants' ? '2px solid var(--primary)' : 'none', fontSize: '0.85rem', transition: 'var(--transition-smooth)' }}>
               <Users size={14} />
               <span>Users</span>
+            </button>
+            </div>
+            <button className="mobile-only btn btn-icon-only" onClick={() => setIsMobileChatOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-main)', padding: '0.85rem', flexShrink: 0 }}>
+              <X size={20} />
             </button>
           </div>
 
@@ -1692,7 +1780,7 @@ const Room = () => {
                               {isMe && !msg.isDeleted && (
                                 <span style={{ fontSize: '0.65rem', marginLeft: '6px', display: 'inline-flex', alignItems: 'center' }}>
                                   {msg.status === 'sending' ? '⏳' : 
-                                   (msg.seenBy && msg.seenBy.length > 0) ? <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>✓✓</span> : 
+                                   (msg.seenBy && msg.seenBy.length > 0) ? <span style={{ color: '#14b8a6', fontWeight: 'bold' }}>✓✓</span> : 
                                    '✓✓'}
                                 </span>
                               )}
@@ -1909,7 +1997,7 @@ const Room = () => {
                       </div>
 
                       <div>
-                        <h4 style={{ fontSize: '0.85rem', color: '#06b6d4', fontWeight: 700, marginBottom: '4px' }}>Key Highlights</h4>
+                        <h4 style={{ fontSize: '0.85rem', color: '#14b8a6', fontWeight: 700, marginBottom: '4px' }}>Key Highlights</h4>
                         <ul style={{ fontSize: '0.75rem', color: 'var(--text-muted)', paddingLeft: '1rem', lineHeight: 1.5 }}>
                           {aiSummary.keyHighlights.map((hl, idx) => <li key={idx}>{hl}</li>)}
                         </ul>
@@ -2198,7 +2286,7 @@ const Room = () => {
       )}
 
       {/* Floating Action Controls Footer Bar */}
-      <footer className="glass-container" style={{
+      <footer className="glass-container room-controls-bar" style={{
         margin: '0 1rem 1rem 1rem',
         padding: '0.75rem',
         display: 'flex',
@@ -2209,6 +2297,21 @@ const Room = () => {
         borderRadius: '12px',
         flexShrink: 0
       }}>
+        {/* Mobile Chat Toggle */}
+        <button
+          onClick={() => setIsMobileChatOpen(!isMobileChatOpen)}
+          className={`btn btn-icon-only mobile-only ${isMobileChatOpen ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ width: '48px', height: '48px', position: 'relative' }}
+          title="Toggle Chat"
+        >
+          <MessageSquare size={20} />
+          {unreadCount > 0 && (
+            <span style={{ position: 'absolute', top: -5, right: -5, background: 'var(--danger)', color: 'white', borderRadius: '50%', padding: '2px 6px', fontSize: '10px', fontWeight: 'bold' }}>
+              {unreadCount}
+            </span>
+          )}
+        </button>
+
         {/* Toggle Microphone */}
         <button
           onClick={toggleMic}

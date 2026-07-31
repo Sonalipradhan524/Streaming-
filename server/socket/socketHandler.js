@@ -136,6 +136,25 @@ const socketHandler = (io) => {
           }
         }
 
+        // Load chat history
+        if (memoryDb.isOnline() && room) {
+          const Message = require('../models/Message');
+          try {
+            const history = await Message.find({ room: room._id })
+              .sort({ createdAt: 1 })
+              .limit(50)
+              .populate('sender', 'username email avatarColor profilePicture')
+              .populate('receiver', 'username email avatarColor profilePicture')
+              .populate({
+                path: 'replyTo',
+                populate: { path: 'sender', select: 'username avatarColor' }
+              });
+            socket.emit('chat-history', history);
+          } catch (err) {
+            console.error('Error fetching chat history:', err);
+          }
+        }
+
         // Send existing room participants (and their socket IDs) to the newcomer
         socket.emit('all-users', otherUsers);
 
@@ -227,7 +246,7 @@ const socketHandler = (io) => {
 
         // Add tempId so sender can confirm delivery
         if (tempId) {
-          socket.emit('message-delivered', { tempId, _id: messageData._id });
+          socket.emit('message-delivered', { tempId, message: messageData });
         }
 
         // Direct message routing vs Room broadcast
@@ -246,8 +265,8 @@ const socketHandler = (io) => {
             }
           }
         } else {
-          // Broadcast to everyone in the room
-          io.to(roomId).emit('message-received', messageData);
+          // Broadcast to everyone in the room EXCEPT the sender
+          socket.to(roomId).emit('message-received', messageData);
         }
       } catch (error) {
         console.error('Error sending message:', error);

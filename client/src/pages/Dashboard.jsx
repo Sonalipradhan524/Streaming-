@@ -27,7 +27,9 @@ import {
   ChevronRight,
   TrendingUp,
   Cpu,
-  Edit2
+  Edit2,
+  Menu,
+  X
 } from 'lucide-react';
 
 const Dashboard = () => {
@@ -37,6 +39,7 @@ const Dashboard = () => {
 
   // Navigation state
   const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'analytics', 'profile', 'settings'
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Room listings states
   const [rooms, setRooms] = useState([]);
@@ -258,13 +261,15 @@ const Dashboard = () => {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', backgroundColor: 'var(--bg-dark)', overflow: 'hidden' }} className="fade-in">
+    <div style={{ height: '100vh', display: 'flex', backgroundColor: 'var(--bg-dark)', overflow: 'hidden' }} className="fade-in dashboard-layout">
       <div className="bg-glow-wrapper">
         <div className="glow-orb-1"></div>
         <div className="glow-orb-2"></div>
       </div>
 
-      <aside className="glass-container sidebar-nav-container" style={{
+      <div className={`sidebar-overlay ${isMobileMenuOpen ? 'mobile-open' : ''}`} onClick={() => setIsMobileMenuOpen(false)}></div>
+
+      <aside className={`glass-container sidebar-nav-container ${isMobileMenuOpen ? 'mobile-open' : ''}`} style={{
         width: '260px',
         borderRight: '1px solid var(--border-light)',
         display: 'flex',
@@ -276,8 +281,9 @@ const Dashboard = () => {
       }}>
         
         {/* Logo Section */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2.5rem' }}>
-          <div style={{
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{
             background: 'var(--primary-gradient)',
             borderRadius: '10px',
             padding: '0.5rem',
@@ -291,33 +297,37 @@ const Dashboard = () => {
           <span style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.02em', background: 'var(--primary-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
             LiveLink
           </span>
+          </div>
+          <button className="mobile-only btn btn-icon-only" onClick={() => setIsMobileMenuOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-main)' }}>
+            <X size={24} />
+          </button>
         </div>
 
         {/* Navigation Tabs Links */}
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexGrow: 1 }}>
           <button
-            onClick={() => setActiveTab('overview')}
+            onClick={() => { setActiveTab('overview'); setIsMobileMenuOpen(false); }}
             className={`tab-nav-btn ${activeTab === 'overview' ? 'active' : ''}`}
           >
             <Tv size={18} />
             <span>Overview</span>
           </button>
           <button
-            onClick={() => setActiveTab('analytics')}
+            onClick={() => { setActiveTab('analytics'); setIsMobileMenuOpen(false); }}
             className={`tab-nav-btn ${activeTab === 'analytics' ? 'active' : ''}`}
           >
             <BarChart2 size={18} />
             <span>Analytics</span>
           </button>
           <button
-            onClick={() => setActiveTab('profile')}
+            onClick={() => { setActiveTab('profile'); setIsMobileMenuOpen(false); }}
             className={`tab-nav-btn ${activeTab === 'profile' ? 'active' : ''}`}
           >
             <UserIcon size={18} />
             <span>Profile</span>
           </button>
           <button
-            onClick={() => setActiveTab('settings')}
+            onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }}
             className={`tab-nav-btn ${activeTab === 'settings' ? 'active' : ''}`}
           >
             <Settings size={18} />
@@ -336,7 +346,7 @@ const Dashboard = () => {
       <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto', height: '100%' }}>
         
         {/* Top Header Controls bar */}
-        <header className="glass-container" style={{
+        <header className="glass-container header-controls" style={{
           padding: '1rem 2rem',
           display: 'flex',
           justifyContent: 'space-between',
@@ -345,15 +355,20 @@ const Dashboard = () => {
           borderRadius: '0',
           zIndex: 5
         }}>
-          {/* Header search bar */}
-          <div style={{ position: 'relative', width: '280px' }} className="header-search-bar">
-            <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <button className="mobile-only btn btn-icon-only" onClick={() => setIsMobileMenuOpen(true)} style={{ background: 'var(--bg-panel)', border: '1px solid var(--border-light)' }}>
+              <Menu size={20} />
+            </button>
+            {/* Header search bar */}
+            <div style={{ position: 'relative', width: '280px' }} className="header-search-bar desktop-only">
+              <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }} />
             <input
               type="text"
               className="form-input"
               placeholder="Search streams or tags..."
               style={{ width: '100%', padding: '0.5rem 1rem 0.5rem 2.25rem', fontSize: '0.85rem', borderRadius: '10px' }}
             />
+            </div>
           </div>
 
           {/* User actions */}
@@ -389,7 +404,7 @@ const Dashboard = () => {
         </header>
 
         {/* Tabs Render Viewport */}
-        <main style={{ padding: '2rem', maxWidth: '1200px', width: '100%', margin: '0 auto', flexGrow: 1 }}>
+        <main className="main-content-area" style={{ padding: '2rem', maxWidth: '1200px', width: '100%', margin: '0 auto', flexGrow: 1 }}>
           
           {/* TAB 1: OVERVIEW */}
           {activeTab === 'overview' && (
@@ -400,7 +415,7 @@ const Dashboard = () => {
                 padding: '2.5rem',
                 border: '1px solid var(--border-light)',
                 borderRadius: '16px',
-                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(6, 182, 212, 0.05) 100%)',
+                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(20, 184, 166, 0.05) 100%)',
                 position: 'relative',
                 overflow: 'hidden'
               }}>
@@ -433,7 +448,7 @@ const Dashboard = () => {
               <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.5rem' }}>
                 {[
                   { label: 'Active Streams', value: stats.activeStreams, icon: <Video size={20} color="var(--primary)" />, trend: 'Live streams' },
-                  { label: 'Users Online', value: stats.usersOnline, icon: <Users size={20} color="#06b6d4" />, trend: 'Active sockets' },
+                  { label: 'Users Online', value: stats.usersOnline, icon: <Users size={20} color="#14b8a6" />, trend: 'Active sockets' },
                   { label: 'Meetings Today', value: stats.meetingsToday, icon: <Calendar size={20} color="#f59e0b" />, trend: 'Created today' },
                   { label: 'Total Users', value: stats.totalUsers, icon: <Activity size={20} color="var(--success)" />, trend: 'Registered accounts' }
                 ].map((stat, idx) => (
@@ -527,8 +542,8 @@ const Dashboard = () => {
                 {/* Join Room */}
                 <div className="glass-container" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <div style={{ padding: '6px', borderRadius: '8px', backgroundColor: 'rgba(6, 182, 212, 0.15)' }}>
-                      <LogIn size={20} color="#06b6d4" />
+                    <div style={{ padding: '6px', borderRadius: '8px', backgroundColor: 'rgba(20, 184, 166, 0.15)' }}>
+                      <LogIn size={20} color="#14b8a6" />
                     </div>
                     <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Join Meeting Room</h3>
                   </div>
@@ -545,7 +560,7 @@ const Dashboard = () => {
                         required
                       />
                     </div>
-                    <button type="submit" className="btn btn-secondary" style={{ width: '100%', borderColor: 'rgba(6, 182, 212, 0.4)', marginTop: '0.25rem' }}>
+                    <button type="submit" className="btn btn-secondary" style={{ width: '100%', borderColor: 'rgba(20, 184, 166, 0.4)', marginTop: '0.25rem' }}>
                       <LogIn size={18} />
                       Join Room
                     </button>
@@ -830,7 +845,7 @@ const Dashboard = () => {
                   <Tv size={18} color="var(--primary)" />
                   Default Streaming Resolution
                 </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '0.75rem' }}>
                   {['1080p', '720p', '480p'].map((q) => (
                     <button
                       key={q}
@@ -855,7 +870,7 @@ const Dashboard = () => {
               {/* Notification Toggles */}
               <section className="glass-container" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <Bell size={18} color="#06b6d4" />
+                  <Bell size={18} color="#14b8a6" />
                   Alert Preferences
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>

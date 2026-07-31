@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Room from './pages/Room';
+import AIAssistant from './components/AIAssistant';
 import { Loader2 } from 'lucide-react';
 
 // Protected Route Component
@@ -102,6 +103,9 @@ function App() {
             {/* Catch-all Redirect */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
+          
+          {/* Global AI Assistant */}
+          <AIAssistant />
         </Router>
       </AuthProvider>
     </ToastProvider>
