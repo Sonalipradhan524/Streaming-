@@ -842,21 +842,12 @@ const Room = () => {
         }
 
         const screenTrack = screenStream.getVideoTracks()[0];
-        const screenAudioTrack = screenStream.getAudioTracks()[0];
 
         Object.values(peersRef.current).forEach((pc) => {
           const senders = pc.getSenders();
-          
           const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
-          if (videoSender && screenTrack) {
+          if (videoSender) {
             videoSender.replaceTrack(screenTrack);
-          }
-
-          if (screenAudioTrack) {
-            const audioSender = senders.find((s) => s.track && s.track.kind === 'audio');
-            if (audioSender) {
-              audioSender.replaceTrack(screenAudioTrack);
-            }
           }
         });
 
@@ -889,21 +880,15 @@ const Room = () => {
     }
 
     const localVideoTrack = localStreamRef.current?.getVideoTracks()[0];
-    const localAudioTrack = localStreamRef.current?.getAudioTracks()[0];
-    
-    Object.values(peersRef.current).forEach((pc) => {
-      const senders = pc.getSenders();
-      
-      const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
-      if (videoSender && localVideoTrack) {
-        videoSender.replaceTrack(localVideoTrack);
-      }
-
-      const audioSender = senders.find((s) => s.track && s.track.kind === 'audio');
-      if (audioSender && localAudioTrack) {
-        audioSender.replaceTrack(localAudioTrack);
-      }
-    });
+    if (localVideoTrack) {
+      Object.values(peersRef.current).forEach((pc) => {
+        const senders = pc.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        if (videoSender && localVideoTrack) {
+          videoSender.replaceTrack(localVideoTrack);
+        }
+      });
+    }
 
     if (localVideoRef.current && localStreamRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
