@@ -20,6 +20,7 @@ IMPORTANT: You MUST reply in the following language: ${language}.`;
 // @route   POST /api/ai/ask
 // @access  Private
 exports.askQuestion = async (req, res) => {
+  console.log('--- AI ROUTE HIT ---', req.body.question);
   try {
     const { question, meetingId, context, language = 'English' } = req.body;
 
@@ -53,7 +54,7 @@ exports.askQuestion = async (req, res) => {
 
     // Call Gemini
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.5-flash',
       contents: promptText,
       config: {
         systemInstruction: getSystemInstruction(language),

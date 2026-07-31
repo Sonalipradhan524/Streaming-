@@ -168,6 +168,7 @@ const Room = () => {
   const roomContainerRef = useRef(null);
   const queuedCandidatesRef = useRef({}); // { socketId: [RTCIceCandidate] }
   const isCaptionsEnabledRef = useRef(false);
+  const usersMapRef = useRef({}); // { socketId: user }
 
   // Inject Meeting Context for AI Assistant
   useEffect(() => {
@@ -271,7 +272,10 @@ const Room = () => {
             width: 1280, height: 720, frameRate: { ideal: 30 }
           } : false,
           audio: deviceSelections.isMicEnabled ? {
-            deviceId: deviceSelections.audioDeviceId ? { exact: deviceSelections.audioDeviceId } : undefined
+            deviceId: deviceSelections.audioDeviceId ? { exact: deviceSelections.audioDeviceId } : undefined,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
           } : false
         };
 
@@ -371,6 +375,16 @@ const Room = () => {
       }
     }
   }, [localStream, hasJoined]);
+
+  // Keep remote speakers in sync with isSpeakerEnabled
+  useEffect(() => {
+    const videos = document.querySelectorAll('.video-card video');
+    videos.forEach(v => {
+      if (v !== localVideoRef.current) {
+        v.muted = !isSpeakerEnabled;
+      }
+    });
+  }, [isSpeakerEnabled, remotePeers]);
 
   // 4. Socket Connection & WebRTC Signaling
   const connectSocket = () => {
@@ -557,6 +571,7 @@ const Room = () => {
     socketRef.current.on('all-users', (users) => {
       console.log('All existing users in room:', users);
       users.forEach(({ socketId, user: peerUser }) => {
+        usersMapRef.current[socketId] = peerUser;
         const pc = createPeerConnection(socketId, peerUser);
         peersRef.current[socketId] = pc;
         
@@ -581,6 +596,7 @@ const Room = () => {
 
     socketRef.current.on('user-joined', ({ socketId, user: joiningUser }) => {
       showToast(`${joiningUser.username} joined the stream!`, 'success');
+      usersMapRef.current[socketId] = joiningUser;
       setRemotePeers(prev => {
         if (prev.some(p => p.socketId === socketId)) return prev;
         return [...prev, { socketId, user: joiningUser, stream: null }];
@@ -591,8 +607,7 @@ const Room = () => {
       let pc = peersRef.current[from];
 
       if (!pc) {
-        const peer = remotePeers.find(p => p.socketId === from);
-        const peerUser = peer ? peer.user : { username: 'Peer', avatarColor: '#8b5cf6' };
+        const peerUser = usersMapRef.current[from] || { username: 'Peer', avatarColor: '#8b5cf6' };
         
         pc = createPeerConnection(from, peerUser);
         peersRef.current[from] = pc;
@@ -701,10 +716,10 @@ const Room = () => {
           let existingStream = updated[index].stream;
           if (existingStream) {
             existingStream.addTrack(event.track);
+            updated[index] = { ...updated[index], stream: new MediaStream(existingStream.getTracks()) };
           } else {
-            existingStream = event.streams[0] || new MediaStream([event.track]);
+            updated[index] = { ...updated[index], stream: event.streams[0] || new MediaStream([event.track]) };
           }
-          updated[index] = { ...updated[index], stream: existingStream };
           return updated;
         } else {
           const newStream = event.streams[0] || new MediaStream([event.track]);
@@ -717,65 +732,43 @@ const Room = () => {
   };
 
   // 5. Media Control Actions
-  const requestMediaPermission = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720, frameRate: { ideal: 30 } },
-        audio: true
-      });
-      
-      setLocalStream(stream);
-      localStreamRef.current = stream;
-      setMediaError('');
-      showToast('Camera and microphone connected!', 'success');
-
-      // Update any active peer connections with the tracks and renegotiate
-      Object.entries(peersRef.current).forEach(async ([peerSocketId, pc]) => {
-        const senders = pc.getSenders();
-        stream.getTracks().forEach((track) => {
-          const existingSender = senders.find(s => s.track && s.track.kind === track.kind);
-          if (existingSender) {
-            existingSender.replaceTrack(track);
-          } else {
-            pc.addTrack(track, stream);
-          }
-        });
+  const toggleMic = async () => {
+    let stream = localStreamRef.current;
+    let audioTrack = stream?.getAudioTracks()[0];
+    
+    if (!audioTrack) {
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        const newAudioTrack = newStream.getAudioTracks()[0];
         
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          if (socketRef.current) {
-            socketRef.current.emit('send-signal', {
+        if (stream) {
+          stream.addTrack(newAudioTrack);
+        } else {
+          stream = newStream;
+          setLocalStream(stream);
+          localStreamRef.current = stream;
+        }
+        
+        setIsMicEnabled(true);
+        showToast('Microphone active', 'info');
+        
+        // Add track to peers and renegotiate
+        Object.entries(peersRef.current).forEach(async ([peerSocketId, pc]) => {
+          pc.addTrack(newAudioTrack, stream);
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socketRef.current?.emit('send-signal', {
               to: peerSocketId,
               signal: { type: 'offer', sdp: pc.localDescription }
             });
-          }
-        } catch (e) {
-          console.error('Error renegotiating media:', e);
-        }
-      });
-      
-      return stream;
-    } catch (err) {
-      console.error('Could not capture local media on demand:', err);
-      showToast('Media access still blocked. Please allow permissions in browser settings.', 'error');
-      return null;
-    }
-  };
-
-  const toggleMic = async () => {
-    let stream = localStreamRef.current;
-    if (!stream) {
-      stream = await requestMediaPermission();
-      if (stream) {
-        setIsMicEnabled(true);
-        setIsCamEnabled(true);
+          } catch (e) { console.error('Error renegotiating mic:', e); }
+        });
+      } catch (e) {
+        console.error(e);
+        showToast('Microphone access denied', 'error');
       }
-      return;
-    }
-
-    const audioTrack = stream.getAudioTracks()[0];
-    if (audioTrack) {
+    } else {
       audioTrack.enabled = !audioTrack.enabled;
       setIsMicEnabled(audioTrack.enabled);
       showToast(audioTrack.enabled ? 'Microphone active' : 'Microphone muted', 'info');
@@ -784,17 +777,46 @@ const Room = () => {
 
   const toggleCam = async () => {
     let stream = localStreamRef.current;
-    if (!stream) {
-      stream = await requestMediaPermission();
-      if (stream) {
-        setIsMicEnabled(true);
+    let videoTrack = stream?.getVideoTracks()[0];
+    
+    if (!videoTrack) {
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, frameRate: { ideal: 30 } } });
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        
+        if (stream) {
+          stream.addTrack(newVideoTrack);
+        } else {
+          stream = newStream;
+          setLocalStream(stream);
+          localStreamRef.current = stream;
+        }
+        
         setIsCamEnabled(true);
+        showToast('Camera active', 'info');
+        
+        // Add track to peers and renegotiate
+        Object.entries(peersRef.current).forEach(async ([peerSocketId, pc]) => {
+          pc.addTrack(newVideoTrack, stream);
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socketRef.current?.emit('send-signal', {
+              to: peerSocketId,
+              signal: { type: 'offer', sdp: pc.localDescription }
+            });
+          } catch (e) { console.error('Error renegotiating cam:', e); }
+        });
+        
+        // Ensure local video element uses it
+        if (localVideoRef.current && localVideoRef.current.srcObject !== stream) {
+            localVideoRef.current.srcObject = stream;
+        }
+      } catch (e) {
+        console.error(e);
+        showToast('Camera access denied', 'error');
       }
-      return;
-    }
-
-    const videoTrack = stream.getVideoTracks()[0];
-    if (videoTrack) {
+    } else {
       videoTrack.enabled = !videoTrack.enabled;
       setIsCamEnabled(videoTrack.enabled);
       showToast(videoTrack.enabled ? 'Camera active' : 'Camera disabled', 'info');
