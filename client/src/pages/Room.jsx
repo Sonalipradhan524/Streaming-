@@ -298,45 +298,68 @@ const Room = () => {
         };
 
         let stream;
-        if (constraints.audio || constraints.video) {
-          stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } else {
-          stream = new MediaStream();
-        }
+        
+        const getMediaWithRetry = async (retries = 2) => {
+          for (let i = 0; i < retries; i++) {
+            try {
+              if (constraints.audio || constraints.video) {
+                return await navigator.mediaDevices.getUserMedia(constraints);
+              } else {
+                return new MediaStream();
+              }
+            } catch (err) {
+              if (i === retries - 1) throw err;
+              console.warn('Camera locked, retrying in 500ms...');
+              await new Promise(r => setTimeout(r, 500));
+            }
+          }
+        };
+
+        stream = await getMediaWithRetry();
         
         setIsMicEnabled(deviceSelections.isMicEnabled);
         setIsCamEnabled(deviceSelections.isCamEnabled);
 
         setLocalStream(stream);
         localStreamRef.current = stream;
-        
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
 
-        // Speaker Detection
-        if (stream.getAudioTracks().length > 0) {
+        // Noise suppression filter setup if audio is enabled
+        if (constraints.audio && stream.getAudioTracks().length > 0) {
           try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 512;
-            const source = audioCtx.createMediaStreamSource(stream);
-            source.connect(analyser);
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            const audioCtx = new AudioContext();
             audioContextRef.current = audioCtx;
+            
+            const source = audioCtx.createMediaStreamSource(stream);
+            audioSourceRef.current = source;
+            
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 4000;
+            filterNodeRef.current = filter;
+            
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
             analyserNodeRef.current = analyser;
             
+            source.connect(filter);
+            filter.connect(analyser);
+
             const dataArray = new Uint8Array(analyser.frequencyBinCount);
             const checkAudioLevel = () => {
-              if (analyserNodeRef.current && localStreamRef.current?.getAudioTracks()[0]?.enabled) {
+              if (analyserNodeRef.current && socketRef.current) {
                 analyserNodeRef.current.getByteFrequencyData(dataArray);
                 let sum = 0;
                 for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-                const average = sum / dataArray.length;
-                setIsSpeaking(average > 10);
-              } else {
-                setIsSpeaking(false);
+                const avg = sum / dataArray.length;
+                
+                const speaking = avg > 25; // threshold
+                if (speaking !== isSpeaking) {
+                  setIsSpeaking(speaking);
+                  socketRef.current.emit('is-speaking', speaking);
+                }
+                requestAnimationFrame(checkAudioLevel);
               }
-              requestAnimationFrame(checkAudioLevel);
             };
             checkAudioLevel();
           } catch(e) {
@@ -417,7 +440,8 @@ const Room = () => {
 
     socketRef.current.on('connect', () => {
       console.log('Connected to socket server:', socketRef.current.id);
-      socketRef.current.emit('join-room', { roomId, userId: user._id });
+      const safeUserId = user?._id || user?.id || 'guest-' + Math.random().toString(36).substring(7);
+      socketRef.current.emit('join-room', { roomId, userId: safeUserId });
     });
 
     socketRef.current.on('disconnect', (reason) => {
@@ -428,8 +452,9 @@ const Room = () => {
     socketRef.current.on('reconnect', (attemptNumber) => {
       console.log('Reconnected to socket server after', attemptNumber, 'attempts');
       showToast('Reconnected to server!', 'success');
+      const safeUserId = user?._id || user?.id || 'guest-' + Math.random().toString(36).substring(7);
       // Re-join the room upon reconnecting
-      socketRef.current.emit('join-room', { roomId, userId: user._id });
+      socketRef.current.emit('join-room', { roomId, userId: safeUserId });
     });
 
     // Waiting Room events
