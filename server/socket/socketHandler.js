@@ -123,7 +123,7 @@ const socketHandler = (io) => {
           for (const clientSocketId of roomClients) {
             if (clientSocketId !== socket.id) {
               const peerUserData = socketToUser[clientSocketId];
-              if (peerUserData && peerUserData._id.toString() === userId.toString()) {
+              if (peerUserData && peerUserData._id && userId && peerUserData._id.toString() === userId.toString()) {
                 console.log(`Ghost user connection skipped: socket ${clientSocketId} for user ${userId}`);
                 continue;
               }

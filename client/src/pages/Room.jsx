@@ -180,7 +180,25 @@ const Room = () => {
   const iceConfiguration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
     ]
   };
 
@@ -493,12 +511,12 @@ const Room = () => {
         // We are looking at chat, mark as seen
         socketRef.current.emit('message-seen', { messageId: message._id });
       }
-      setTimeout(scrollToBottom, 100);
+
     });
 
     socketRef.current.on('chat-history', (history) => {
       setMessages(history);
-      setTimeout(scrollToBottom, 100);
+
     });
 
     socketRef.current.on('message-delivered', ({ tempId, message }) => {
@@ -572,6 +590,12 @@ const Room = () => {
       console.log('All existing users in room:', users);
       users.forEach(({ socketId, user: peerUser }) => {
         usersMapRef.current[socketId] = peerUser;
+        
+        // Cleanup old peer connection to avoid duplicates on reconnect
+        if (peersRef.current[socketId]) {
+          peersRef.current[socketId].close();
+        }
+        
         const pc = createPeerConnection(socketId, peerUser);
         peersRef.current[socketId] = pc;
         

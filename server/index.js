@@ -23,14 +23,17 @@ const server = http.createServer(app);
 // Initialize Socket.IO Server
 const io = new Server(server, {
   cors: {
-    origin: '*', // In production, replace with specific domain(s)
-    methods: ['GET', 'POST', 'DELETE', 'PUT'],
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'https://livelink-fa131.web.app', 'https://streaming-dsjf.onrender.com'],
+    methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
+    credentials: true,
   },
 });
 
 // Configure CORS
 app.use(cors({
-  origin: '*', // Allow all origins for convenience, restrict in production
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'https://livelink-fa131.web.app', 'https://streaming-dsjf.onrender.com'],
+  methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
+  credentials: true,
 }));
 
 // Security Middleware
