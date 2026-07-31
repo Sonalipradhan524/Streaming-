@@ -85,25 +85,24 @@ const socketHandler = (io) => {
           return;
         }
 
-        // Waiting room logic
-        // If waiting room is enabled and user is a participant (not host/co-host)
+        // Waiting room logic (Temporarily bypassed for instant joining)
         const isHost = room.host.toString() === userId.toString();
         const isCoHost = room.coHosts && room.coHosts.some(id => id.toString() === userId.toString());
         
-        if (room.waitingRoomEnabled && !isHost && !isCoHost) {
-          socket.join(`waiting-${roomId}`);
-          socket.emit('in-waiting-room');
-          // Notify hosts
-          io.to(roomId).emit('user-in-waiting-room', {
-            socketId: socket.id,
-            user: {
-              _id: user._id,
-              username: user.username,
-              avatarColor: user.avatarColor,
-            }
-          });
-          return; // Stop here until admitted
-        }
+        // if (room.waitingRoomEnabled && !isHost && !isCoHost) {
+        //   socket.join(`waiting-${roomId}`);
+        //   socket.emit('in-waiting-room');
+        //   // Notify hosts
+        //   io.to(roomId).emit('user-in-waiting-room', {
+        //     socketId: socket.id,
+        //     user: {
+        //       _id: user._id,
+        //       username: user.username,
+        //       avatarColor: user.avatarColor,
+        //     }
+        //   });
+        //   return; // Stop here until admitted
+        // }
 
         // Store mappings
         socketToUser[socket.id] = {

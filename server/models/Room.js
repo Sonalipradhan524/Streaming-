@@ -45,7 +45,7 @@ const roomSchema = new mongoose.Schema(
     },
     waitingRoomEnabled: {
       type: Boolean,
-      default: true,
+      default: false,
     },
     coHosts: [
       {
