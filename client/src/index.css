@@ -6,16 +6,16 @@
   --bg-card: rgba(255, 255, 255, 0.8);
   --bg-panel: rgba(241, 245, 249, 0.8);
   
-  --primary: #8b5cf6;
-  --primary-glow: rgba(139, 92, 246, 0.15);
-  --primary-gradient: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
-  --secondary-gradient: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
+  --primary: #0d9488;
+  --primary-glow: rgba(13, 148, 136, 0.15);
+  --primary-gradient: linear-gradient(135deg, #2dd4bf 0%, #0f766e 100%);
+  --secondary-gradient: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
   
   --text-main: #0f172a;
   --text-muted: #475569;
   
   --border-light: rgba(0, 0, 0, 0.1);
-  --border-active: rgba(139, 92, 246, 0.5);
+  --border-active: rgba(13, 148, 136, 0.5);
   
   --success: #10b981;
   --danger: #ef4444;
@@ -26,7 +26,7 @@
   /* Shadow & Blur System */
   --glass-blur: blur(16px);
   --shadow-premium: 0 10px 30px -10px rgba(0, 0, 0, 0.1);
-  --shadow-glow: 0 0 20px rgba(139, 92, 246, 0.25);
+  --shadow-glow: 0 0 20px rgba(13, 148, 136, 0.25);
   
   /* Transitions */
   --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -83,7 +83,7 @@ body {
   width: 50vw;
   height: 50vh;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(139, 92, 246, 0.15) 0%, rgba(0, 0, 0, 0) 70%);
+  background: radial-gradient(circle, rgba(13, 148, 136, 0.15) 0%, rgba(0, 0, 0, 0) 70%);
   filter: blur(80px);
   animation: floatOrb 20s ease-in-out infinite alternate;
 }
@@ -118,8 +118,8 @@ body {
   transition: var(--transition-smooth);
 }
 .glass-container-hover:hover {
-  border-color: rgba(139, 92, 246, 0.3);
-  box-shadow: 0 12px 40px -12px rgba(139, 92, 246, 0.15);
+  border-color: rgba(13, 148, 136, 0.3);
+  box-shadow: 0 12px 40px -12px rgba(13, 148, 136, 0.15);
   transform: translateY(-2px);
 }
 
@@ -143,7 +143,7 @@ body {
 .btn-primary {
   background: var(--primary-gradient);
   color: #fff;
-  box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+  box-shadow: 0 4px 15px rgba(13, 148, 136, 0.3);
 }
 .btn-primary:hover:not(:disabled) {
   opacity: 0.95;
@@ -216,7 +216,7 @@ body {
 .form-input:focus {
   border-color: var(--primary);
   background: rgba(0, 0, 0, 0.06);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
 }
 
 /* Typography Helpers */
@@ -386,7 +386,7 @@ body {
   background: var(--primary-glow);
   color: var(--primary);
   font-weight: 600;
-  border: 1px solid rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(13, 148, 136, 0.15);
 }
 
 /* Captions Overlay inside Room */
@@ -450,7 +450,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 30px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 8px 30px rgba(13, 148, 136, 0.4);
   z-index: 100;
   animation: floatUp 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
