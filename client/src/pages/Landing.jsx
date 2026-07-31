@@ -166,27 +166,7 @@ const Landing = () => {
           </div>
         </section>
 
-        {/* Statistics */}
-        <section className="section-padding">
-          <div className="stats-grid">
-            <div className="stat-item">
-              <div className="stat-value">50k+</div>
-              <div className="stat-label">Meetings Created</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">120k</div>
-              <div className="stat-label">Active Users</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">1M+</div>
-              <div className="stat-label">AI Responses</div>
-            </div>
-            <div className="stat-item">
-              <div className="stat-value">150+</div>
-              <div className="stat-label">Countries Supported</div>
-            </div>
-          </div>
-        </section>
+        {/* Removed Statistics Section */}
 
         {/* Testimonials */}
         <section id="testimonials" className="section-padding">

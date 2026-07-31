@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Room from './pages/Room';
+import Landing from './pages/Landing';
 import AIAssistant from './components/AIAssistant';
 import { Loader2 } from 'lucide-react';
 
@@ -64,6 +65,9 @@ function App() {
       <AuthProvider>
         <Router>
           <Routes>
+            {/* Landing Page */}
+            <Route path="/" element={<Landing />} />
+
             {/* Public Authentication Routes */}
             <Route
               path="/login"
